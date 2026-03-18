@@ -219,7 +219,7 @@ async function sendWhatsApp(groups) {
     }
 
     if (i < messages.length - 1) {
-      await new Promise(r => setTimeout(r, 5000));
+      await new Promise(r => setTimeout(r, 8000));
     }
   }
 }
