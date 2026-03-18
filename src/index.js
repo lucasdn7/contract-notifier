@@ -83,7 +83,7 @@ function buildTable(contracts) {
   `).join('');
 
   return `
-    <table style="width:100%;border-collapse:collapse;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,0.08)">
+    <table style="width:100%;border-collapse:collapse;background:#fff;border-radius:8px;overflow:hidden">
       <thead>
         <tr style="background:#f8f9fa">
           <th style="padding:12px 10px;text-align:left;font-size:12px;color:#555;border-bottom:2px solid #dee2e6">Nº PROCESSO</th>
@@ -111,9 +111,7 @@ function buildEmailHtml({ urgent, warning, notice }) {
     .filter(s => s.list.length > 0)
     .map(({ list, color, bg, emoji, label }) => `
       <div style="margin-bottom:35px;background:${bg};border-left:5px solid ${color};border-radius:6px;padding:20px">
-        <h3 style="color:${color};margin:0 0 15px 0">
-          ${emoji} ${label} (${list.length} contrato${list.length > 1 ? 's' : ''})
-        </h3>
+        <h3 style="color:${color};margin:0 0 15px 0">${emoji} ${label} (${list.length} contrato${list.length > 1 ? 's' : ''})</h3>
         ${buildTable(list)}
       </div>
     `).join('');
@@ -122,24 +120,23 @@ function buildEmailHtml({ urgent, warning, notice }) {
     <div style="font-family:Arial,sans-serif;max-width:980px;margin:auto;padding:20px;background:#f5f5f5">
       <div style="background:#fff;border-radius:10px;padding:30px;box-shadow:0 2px 8px rgba(0,0,0,0.1)">
         <h2 style="color:#2c3e50;margin-top:0;border-bottom:3px solid #3498db;padding-bottom:15px">
-          📋 Alertas de Vencimento de Contratos
+          📋 Alertas Semanais de Vencimento de Contratos
         </h2>
         <p style="color:#666;margin-bottom:25px">
           Foram encontrados <strong>${total} contrato(s)</strong> próximos ao vencimento em ${new Date().toLocaleDateString('pt-BR')}.
         </p>
         ${sections}
         <p style="color:#aaa;font-size:11px;margin-top:30px;border-top:1px solid #eee;padding-top:15px">
-          Enviado automaticamente pelo sistema de monitoramento de contratos.
+          Enviado automaticamente toda segunda-feira às 10h.
         </p>
       </div>
     </div>
   `;
 }
 
-// Uma única mensagem resumida por grupo
 function buildWhatsAppSummary({ urgent, warning, notice }) {
   const lines = [];
-  lines.push(`📋 *ALERTA DE CONTRATOS — ${new Date().toLocaleDateString('pt-BR')}*\n`);
+  lines.push(`📋 *ALERTA SEMANAL — ${new Date().toLocaleDateString('pt-BR')}*\n`);
 
   if (urgent.length > 0) {
     lines.push(`🔴 *URGENTE — até 15 dias (${urgent.length})*`);
@@ -167,16 +164,57 @@ function buildWhatsAppSummary({ urgent, warning, notice }) {
   return lines.join('\n');
 }
 
+function buildTelegramSummary({ urgent, warning, notice }) {
+  const lines = [];
+  lines.push(`📋 *ALERTA SEMANAL DE CONTRATOS*`);
+  lines.push(`📅 ${new Date().toLocaleDateString('pt-BR')}\n`);
+
+  if (urgent.length > 0) {
+    lines.push(`🔴 *URGENTE — até 15 dias (${urgent.length})*`);
+    for (const c of urgent) {
+      lines.push(`• *${c.process_number ?? 'N/A'}*`);
+      lines.push(`  🏙 ${c.municipalities?.name ?? 'N/A'}`);
+      lines.push(`  📄 ${c.object ?? 'N/A'}`);
+      lines.push(`  💰 ${formatCurrency(c.total_concedente_value)}`);
+      lines.push(`  📅 ${formatDate(c.vigencia_date)} \\(${c.daysLeft} dias\\)`);
+    }
+    lines.push('');
+  }
+
+  if (warning.length > 0) {
+    lines.push(`🟠 *ATENÇÃO — 16 a 30 dias (${warning.length})*`);
+    for (const c of warning) {
+      lines.push(`• *${c.process_number ?? 'N/A'}*`);
+      lines.push(`  🏙 ${c.municipalities?.name ?? 'N/A'}`);
+      lines.push(`  📄 ${c.object ?? 'N/A'}`);
+      lines.push(`  💰 ${formatCurrency(c.total_concedente_value)}`);
+      lines.push(`  📅 ${formatDate(c.vigencia_date)} \\(${c.daysLeft} dias\\)`);
+    }
+    lines.push('');
+  }
+
+  if (notice.length > 0) {
+    lines.push(`🔵 *AVISO — 31 a 45 dias (${notice.length})*`);
+    for (const c of notice) {
+      lines.push(`• *${c.process_number ?? 'N/A'}*`);
+      lines.push(`  🏙 ${c.municipalities?.name ?? 'N/A'}`);
+      lines.push(`  📄 ${c.object ?? 'N/A'}`);
+      lines.push(`  💰 ${formatCurrency(c.total_concedente_value)}`);
+      lines.push(`  📅 ${formatDate(c.vigencia_date)} \\(${c.daysLeft} dias\\)`);
+    }
+  }
+
+  return lines.join('\n');
+}
+
 async function sendEmail(groups) {
   const total = groups.urgent.length + groups.warning.length + groups.notice.length;
-
   const { error } = await resend.emails.send({
     from: 'onboarding@resend.dev',
     to: process.env.NOTIFY_EMAIL,
-    subject: `📋 ${total} contrato(s) próximo(s) ao vencimento — ${new Date().toLocaleDateString('pt-BR')}`,
+    subject: `📋 Alerta Semanal — ${total} contrato(s) próximo(s) ao vencimento — ${new Date().toLocaleDateString('pt-BR')}`,
     html: buildEmailHtml(groups),
   });
-
   if (error) console.error('Erro ao enviar e-mail:', error);
   else console.log(`✅ E-mail enviado — ${total} contrato(s)`);
 }
@@ -185,12 +223,33 @@ async function sendWhatsApp(groups) {
   const msg = buildWhatsAppSummary(groups);
   const encoded = encodeURIComponent(msg);
   const url = `https://api.callmebot.com/whatsapp.php?phone=${process.env.WHATSAPP_PHONE}&text=${encoded}&apikey=${process.env.CALLMEBOT_API_KEY}`;
-
   try {
     const res = await fetch(url);
-    console.log(`✅ WhatsApp enviado — status ${res.status}`);
+    const body = await res.text();
+    console.log(`✅ WhatsApp enviado — status ${res.status} — ${body}`);
   } catch (err) {
-    console.error('❌ Erro ao enviar WhatsApp:', err.message);
+    console.error('❌ Erro WhatsApp:', err.message);
+  }
+}
+
+async function sendTelegram(groups) {
+  const msg = buildTelegramSummary(groups);
+  const url = `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`;
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: process.env.TELEGRAM_CHAT_ID,
+        text: msg,
+        parse_mode: 'MarkdownV2',
+      }),
+    });
+    const data = await res.json();
+    if (data.ok) console.log('✅ Telegram enviado com sucesso');
+    else console.error('❌ Erro Telegram:', JSON.stringify(data));
+  } catch (err) {
+    console.error('❌ Erro Telegram:', err.message);
   }
 }
 
@@ -209,6 +268,7 @@ async function main() {
 
   await sendEmail(groups);
   await sendWhatsApp(groups);
+  await sendTelegram(groups);
 
   console.log('\n🎉 Processo finalizado!');
 }
