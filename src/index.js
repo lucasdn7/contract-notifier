@@ -30,10 +30,8 @@ function getDaysUntil(dateStr) {
 }
 
 async function getExpiringContracts() {
-  // Busca todos os contratos que vencem nos próximos 45 dias
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-
   const limit = new Date(today);
   limit.setDate(today.getDate() + 45);
 
@@ -48,9 +46,7 @@ async function getExpiringContracts() {
       vigencia_date,
       total_concedente_value,
       licitado_value,
-      municipalities (
-        name
-      )
+      municipalities ( name )
     `)
     .gte('vigencia_date', todayStr)
     .lte('vigencia_date', limitStr)
@@ -61,10 +57,7 @@ async function getExpiringContracts() {
     return { urgent: [], warning: [], notice: [] };
   }
 
-  // Classifica por intervalo
-  const urgent = [];   // até 15 dias
-  const warning = [];  // 16 a 30 dias
-  const notice = [];   // 31 a 45 dias
+  const urgent = [], warning = [], notice = [];
 
   for (const contract of data ?? []) {
     const days = getDaysUntil(contract.vigencia_date);
@@ -111,27 +104,9 @@ function buildEmailHtml({ urgent, warning, notice }) {
   const total = urgent.length + warning.length + notice.length;
 
   const sections = [
-    {
-      list: urgent,
-      color: '#c0392b',
-      bg: '#fdf0ef',
-      emoji: '🔴',
-      label: 'URGENTE — Vencem em até 15 dias',
-    },
-    {
-      list: warning,
-      color: '#e67e22',
-      bg: '#fef9f0',
-      emoji: '🟠',
-      label: 'ATENÇÃO — Vencem entre 16 e 30 dias',
-    },
-    {
-      list: notice,
-      color: '#2980b9',
-      bg: '#f0f7fd',
-      emoji: '🔵',
-      label: 'AVISO — Vencem entre 31 e 45 dias',
-    },
+    { list: urgent, color: '#c0392b', bg: '#fdf0ef', emoji: '🔴', label: 'URGENTE — Vencem em até 15 dias' },
+    { list: warning, color: '#e67e22', bg: '#fef9f0', emoji: '🟠', label: 'ATENÇÃO — Vencem entre 16 e 30 dias' },
+    { list: notice, color: '#2980b9', bg: '#f0f7fd', emoji: '🔵', label: 'AVISO — Vencem entre 31 e 45 dias' },
   ]
     .filter(s => s.list.length > 0)
     .map(({ list, color, bg, emoji, label }) => `
@@ -141,8 +116,7 @@ function buildEmailHtml({ urgent, warning, notice }) {
         </h3>
         ${buildTable(list)}
       </div>
-    `)
-    .join('');
+    `).join('');
 
   return `
     <div style="font-family:Arial,sans-serif;max-width:980px;margin:auto;padding:20px;background:#f5f5f5">
@@ -162,31 +136,35 @@ function buildEmailHtml({ urgent, warning, notice }) {
   `;
 }
 
-function buildWhatsAppMessages({ urgent, warning, notice }) {
-  const messages = [];
+// Uma única mensagem resumida por grupo
+function buildWhatsAppSummary({ urgent, warning, notice }) {
+  const lines = [];
+  lines.push(`📋 *ALERTA DE CONTRATOS — ${new Date().toLocaleDateString('pt-BR')}*\n`);
 
-  const groups = [
-    { list: urgent, emoji: '🔴', label: 'URGENTE (até 15 dias)' },
-    { list: warning, emoji: '🟠', label: 'ATENÇÃO (16 a 30 dias)' },
-    { list: notice, emoji: '🔵', label: 'AVISO (31 a 45 dias)' },
-  ];
+  if (urgent.length > 0) {
+    lines.push(`🔴 *URGENTE — até 15 dias (${urgent.length})*`);
+    for (const c of urgent) {
+      lines.push(`• ${c.process_number ?? 'N/A'} | ${c.municipalities?.name ?? 'N/A'} | ${formatDate(c.vigencia_date)} (${c.daysLeft}d)`);
+    }
+    lines.push('');
+  }
 
-  for (const { list, emoji, label } of groups) {
-    for (const c of list) {
-      const msg =
-        `${emoji} *${label}*\n\n` +
-        `📁 *Processo:* ${c.process_number ?? 'N/A'}\n` +
-        `🏙️ *Município:* ${c.municipalities?.name ?? 'N/A'}\n` +
-        `📄 *Objeto:* ${c.object ?? 'N/A'}\n` +
-        `💰 *Valor Concedente:* ${formatCurrency(c.total_concedente_value)}\n` +
-        `🏷️ *Valor Licitado:* ${formatCurrency(c.licitado_value)}\n` +
-        `📅 *Vencimento:* ${formatDate(c.vigencia_date)}\n` +
-        `⏳ *Dias restantes:* ${c.daysLeft} dias`;
-      messages.push(msg);
+  if (warning.length > 0) {
+    lines.push(`🟠 *ATENÇÃO — 16 a 30 dias (${warning.length})*`);
+    for (const c of warning) {
+      lines.push(`• ${c.process_number ?? 'N/A'} | ${c.municipalities?.name ?? 'N/A'} | ${formatDate(c.vigencia_date)} (${c.daysLeft}d)`);
+    }
+    lines.push('');
+  }
+
+  if (notice.length > 0) {
+    lines.push(`🔵 *AVISO — 31 a 45 dias (${notice.length})*`);
+    for (const c of notice) {
+      lines.push(`• ${c.process_number ?? 'N/A'} | ${c.municipalities?.name ?? 'N/A'} | ${formatDate(c.vigencia_date)} (${c.daysLeft}d)`);
     }
   }
 
-  return messages;
+  return lines.join('\n');
 }
 
 async function sendEmail(groups) {
@@ -204,23 +182,15 @@ async function sendEmail(groups) {
 }
 
 async function sendWhatsApp(groups) {
-  const messages = buildWhatsAppMessages(groups);
-  console.log(`📱 Enviando ${messages.length} mensagem(ns) no WhatsApp...`);
+  const msg = buildWhatsAppSummary(groups);
+  const encoded = encodeURIComponent(msg);
+  const url = `https://api.callmebot.com/whatsapp.php?phone=${process.env.WHATSAPP_PHONE}&text=${encoded}&apikey=${process.env.CALLMEBOT_API_KEY}`;
 
-  for (const [i, msg] of messages.entries()) {
-    const encoded = encodeURIComponent(msg);
-    const url = `https://api.callmebot.com/whatsapp.php?phone=${process.env.WHATSAPP_PHONE}&text=${encoded}&apikey=${process.env.CALLMEBOT_API_KEY}`;
-
-    try {
-      const res = await fetch(url);
-      console.log(`✅ WhatsApp ${i + 1}/${messages.length} enviado — status ${res.status}`);
-    } catch (err) {
-      console.error(`❌ Erro ao enviar WhatsApp ${i + 1}:`, err.message);
-    }
-
-    if (i < messages.length - 1) {
-      await new Promise(r => setTimeout(r, 8000));
-    }
+  try {
+    const res = await fetch(url);
+    console.log(`✅ WhatsApp enviado — status ${res.status}`);
+  } catch (err) {
+    console.error('❌ Erro ao enviar WhatsApp:', err.message);
   }
 }
 
