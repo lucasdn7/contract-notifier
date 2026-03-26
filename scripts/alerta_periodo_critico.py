@@ -3,59 +3,74 @@ alerta_periodo_critico.py
 Fluxo 4 — Executa todo dia às 8h (GitHub Actions cron).
 Busca processos que vencem exatamente daqui 15 dias e notifica.
 Dispara apenas UMA VEZ, no dia exato da entrada no período crítico.
+ 
+Mapeamento de colunas (Supabase):
+  id                    → id
+  process_number        → número do processo
+  municipality_id       → FK para tabela municipalities (id, name)
+  object                → objeto do processo
+  total_concedente_value → valor concedente
+  licitado_value        → valor licitado
+  vigencia_date         → data de vigência
 """
-
+ 
 import os
 import sys
 import requests
 from datetime import datetime, timedelta
-
+ 
 sys.path.insert(0, os.path.dirname(__file__))
 from notificacoes import (
     fmt_moeda, fmt_data, link_processo,
-    notificar_todos, SISTEMA_URL
+    notificar_todos, resolver_municipios, SISTEMA_URL
 )
-
+ 
 SUPABASE_URL   = os.environ["SUPABASE_URL"]
 SUPABASE_KEY   = os.environ["SUPABASE_KEY"]
 SUPABASE_TABLE = os.environ.get("SUPABASE_TABLE", "processos")
-
-
+ 
+ 
 def buscar_criticos():
-    """Busca processos com data_vigencia = hoje + 15 dias (data exata)."""
+    """Busca processos com vigencia_date = hoje + 15 dias (data exata)."""
     data_alvo = (datetime.now().date() + timedelta(days=15)).isoformat()
-
+ 
     url = f"{SUPABASE_URL}/rest/v1/{SUPABASE_TABLE}"
     params = {
-        "select": "id,numero_processo,municipio,objeto,valor_concedente,valor_licitado,data_vigencia",
-        "data_vigencia": f"eq.{data_alvo}"
+        "select": "id,process_number,municipality_id,object,total_concedente_value,licitado_value,vigencia_date",
+        "vigencia_date": f"eq.{data_alvo}"
     }
     headers = {
         "apikey": SUPABASE_KEY,
         "Authorization": f"Bearer {SUPABASE_KEY}",
         "Content-Type": "application/json"
     }
-
+ 
     resp = requests.get(url, params=params, headers=headers, timeout=30)
     resp.raise_for_status()
-    return resp.json()
-
-
+ 
+    processos = resp.json()
+    # Resolve nomes dos municípios em lote
+    return resolver_municipios(processos)
+ 
+ 
 def notificar_processo(p):
     dias  = 15
-    venc  = fmt_data(p.get("data_vigencia"))
-    conc  = fmt_moeda(p.get("valor_concedente"))
-    lic   = fmt_moeda(p.get("valor_licitado"))
-    lnk   = link_processo(p.get("id") or p.get("numero_processo", ""))
+    venc  = fmt_data(p.get("vigencia_date"))
+    conc  = fmt_moeda(p.get("total_concedente_value"))
+    lic   = fmt_moeda(p.get("licitado_value"))
+    lnk   = link_processo(p.get("id") or p.get("process_number", ""))
     agora = datetime.now().strftime("%d/%m/%Y às %H:%M")
-
+ 
+    # municipio_nome já foi resolvido por resolver_municipios()
+    municipio_nome = p.get("municipio_nome", str(p.get("municipality_id", "")))
+ 
     # ─── WHATSAPP ──────────────────────────────
     wpp = (
         f"🚨 *ALERTA — PERÍODO CRÍTICO DE 15 DIAS*\n\n"
         f"O processo abaixo entra hoje no período de alerta máximo!\n\n"
-        f"📌 *Processo:* {p['numero_processo']}\n"
-        f"🏙️ *Município:* {p['municipio']}\n"
-        f"📄 *Objeto:* {p['objeto']}\n"
+        f"📌 *Processo:* {p['process_number']}\n"
+        f"🏙️ *Município:* {municipio_nome}\n"
+        f"📄 *Objeto:* {p['object']}\n"
         f"💰 *Valor concedente:* {conc}\n"
         f"💰 *Valor licitado:* {lic}\n"
         f"📅 *Vencimento:* {venc}\n"
@@ -63,14 +78,14 @@ def notificar_processo(p):
         f"⚠️ Providências: aditivo, renovação ou encerramento.\n"
         f"🔗 {lnk}"
     )
-
+ 
     # ─── TELEGRAM ─────────────────────────────
     tg = (
         f"🚨 <b>ALERTA — PERÍODO CRÍTICO DE 15 DIAS</b>\n\n"
         f"O processo abaixo entra hoje no período de alerta máximo!\n\n"
-        f"📌 <b>Processo:</b> {p['numero_processo']}\n"
-        f"🏙️ <b>Município:</b> {p['municipio']}\n"
-        f"📄 <b>Objeto:</b> {p['objeto']}\n"
+        f"📌 <b>Processo:</b> {p['process_number']}\n"
+        f"🏙️ <b>Município:</b> {municipio_nome}\n"
+        f"📄 <b>Objeto:</b> {p['object']}\n"
         f"💰 <b>Valor concedente:</b> {conc}\n"
         f"💰 <b>Valor licitado:</b> {lic}\n"
         f"📅 <b>Vencimento:</b> {venc}\n"
@@ -78,7 +93,7 @@ def notificar_processo(p):
         f"⚠️ Providências: aditivo, renovação ou encerramento.\n"
         f"🔗 <a href=\"{lnk}\">Acessar processo</a>"
     )
-
+ 
     # ─── E-MAIL HTML ──────────────────────────
     html = f"""<!DOCTYPE html>
 <html lang="pt-BR"><body style="font-family:Arial,sans-serif;max-width:600px;
@@ -97,11 +112,11 @@ def notificar_processo(p):
       </div>
       <table style="width:100%;border-collapse:collapse;font-size:14px;">
         <tr><td style="padding:10px 0;color:#6b7280;width:160px;">Nº do Processo</td>
-            <td style="padding:10px 0;font-weight:700;">{p['numero_processo']}</td></tr>
+            <td style="padding:10px 0;font-weight:700;">{p['process_number']}</td></tr>
         <tr style="background:#f8fafc;"><td style="padding:10px 8px;color:#6b7280;">Município</td>
-            <td style="padding:10px 8px;">{p['municipio']}</td></tr>
+            <td style="padding:10px 8px;">{municipio_nome}</td></tr>
         <tr><td style="padding:10px 0;color:#6b7280;">Objeto</td>
-            <td style="padding:10px 0;">{p['objeto']}</td></tr>
+            <td style="padding:10px 0;">{p['object']}</td></tr>
         <tr style="background:#f8fafc;"><td style="padding:10px 8px;color:#6b7280;">Valor Concedente</td>
             <td style="padding:10px 8px;">{conc}</td></tr>
         <tr><td style="padding:10px 0;color:#6b7280;">Valor Licitado</td>
@@ -119,32 +134,33 @@ def notificar_processo(p):
     </div>
   </div>
 </body></html>"""
-
+ 
     notificar_todos(
-        assunto_email   = f"🚨 URGENTE — Proc. {p['numero_processo']} | {p['municipio']} — Vence em {dias} dias ({venc})",
+        assunto_email   = f"🚨 URGENTE — Proc. {p['process_number']} | {municipio_nome} — Vence em {dias} dias ({venc})",
         html_email      = html,
         texto_whatsapp  = wpp,
         texto_telegram  = tg,
-        ntfy_titulo     = f"URGENTE: Proc. {p['numero_processo']} vence em {dias} dias",
-        ntfy_mensagem   = f"{p['municipio']} | {p['objeto']} | Vencimento: {venc}",
+        ntfy_titulo     = f"URGENTE: Proc. {p['process_number']} vence em {dias} dias",
+        ntfy_mensagem   = f"{municipio_nome} | {p['object']} | Vencimento: {venc}",
         ntfy_prioridade = 5,
         ntfy_link       = lnk
     )
-
-
+ 
+ 
 def main():
     print("🔍 Verificando processos que entram hoje no período crítico...")
     processos = buscar_criticos()
-
+ 
     if not processos:
         print("✅ Nenhum processo entra no período crítico hoje. Nada a notificar.")
         return
-
+ 
     print(f"⚠️  {len(processos)} processo(s) entra(m) hoje no período de 15 dias!")
     for p in processos:
-        print(f"   → {p.get('numero_processo')} | {p.get('municipio')}")
+        municipio_nome = p.get("municipio_nome", p.get("municipality_id", ""))
+        print(f"   → {p.get('process_number')} | {municipio_nome}")
         notificar_processo(p)
-
-
+ 
+ 
 if __name__ == "__main__":
     main()
