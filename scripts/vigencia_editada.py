@@ -21,7 +21,7 @@ from datetime import datetime, date
  
 sys.path.insert(0, os.path.dirname(__file__))
 from notificacoes import (
-    fmt_moeda, fmt_data, dias_restantes, link_processo,
+    fmt_moeda, fmt_data, dias_restantes, link_processo, link_google_calendar,
     notificar_todos, buscar_nome_municipio, SISTEMA_URL
 )
  
@@ -56,6 +56,17 @@ def main():
     conc        = fmt_moeda(novo.get("total_concedente_value"))
     lic         = fmt_moeda(novo.get("licitado_value"))
     lnk         = link_processo(novo.get("id") or novo.get("process_number", ""))
+    lnk_calendar = link_google_calendar(
+        titulo=f"Vigência processo {novo.get('process_number', '')}",
+        data_iso=data_nova,
+        descricao=(
+            f"Processo: {novo.get('process_number', '')}\n"
+            f"Município: {municipio_nome}\n"
+            f"Objeto: {novo.get('object', '')}\n"
+            f"Link: {lnk}"
+        ),
+        local=municipio_nome
+    )
     agora       = datetime.now().strftime("%d/%m/%Y às %H:%M")
  
     # Calcula diferença entre datas
@@ -94,7 +105,7 @@ def main():
     ]
     if diff_texto_wpp:
         linhas_wpp.append(diff_texto_wpp)
-    linhas_wpp += [f"🔗 {lnk}", "", f"_Alterado em {agora}_"]
+    linhas_wpp += [f"🔗 {lnk}", f"🗓️ Google Calendar: {lnk_calendar}", "", f"_Alterado em {agora}_"]
     wpp = "\n".join(linhas_wpp)
  
     # ─── TELEGRAM ──────────────────────────────────────────
@@ -110,7 +121,7 @@ def main():
     ]
     if diff_texto_tg:
         linhas_tg.append(diff_texto_tg)
-    linhas_tg += [f"🔗 <a href=\"{lnk}\">Acessar processo</a>", "", f"<i>Alterado em {agora}</i>"]
+    linhas_tg += [f"🔗 <a href=\"{lnk}\">Acessar processo</a>", f"🗓️ <a href=\"{lnk_calendar}\">Adicionar no Google Calendar</a>", "", f"<i>Alterado em {agora}</i>"]
     tg = "\n".join(linhas_tg)
  
     # ─── E-MAIL HTML ───────────────────────────────────────
@@ -160,6 +171,12 @@ def main():
         <a href="{lnk}" style="background:#4361ee;color:white;padding:12px 28px;
            border-radius:8px;text-decoration:none;font-weight:700;font-size:14px;">
           🔗 Acessar Processo
+        </a>
+      </div>
+      <div style="margin-top:12px;text-align:center;">
+        <a href="{lnk_calendar}" style="background:#166534;color:white;padding:12px 28px;
+           border-radius:8px;text-decoration:none;font-weight:700;font-size:14px;display:inline-block;">
+          🗓️ Adicionar no Google Calendar
         </a>
       </div>
     </div>

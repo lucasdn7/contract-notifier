@@ -20,7 +20,7 @@ from datetime import datetime, timedelta
  
 sys.path.insert(0, os.path.dirname(__file__))
 from notificacoes import (
-    fmt_moeda, fmt_data, dias_restantes, link_processo,
+    fmt_moeda, fmt_data, dias_restantes, link_processo, link_google_calendar,
     notificar_todos, resolver_municipios, SISTEMA_URL
 )
  
@@ -80,6 +80,17 @@ def classificar(processos):
         p["val_conc_fmt"] = fmt_moeda(p.get("total_concedente_value"))
         p["val_lic_fmt"]  = fmt_moeda(p.get("licitado_value"))
         p["link"]         = link_processo(p.get("id") or p.get("process_number", ""))
+        p["calendar_link"] = link_google_calendar(
+            titulo=f"Vigência processo {p.get('process_number', '')}",
+            data_iso=p.get("vigencia_date"),
+            descricao=(
+                f"Processo: {p.get('process_number', '')}\n"
+                f"Município: {p.get('municipio_nome', '')}\n"
+                f"Objeto: {p.get('object', '')}\n"
+                f"Link: {p['link']}"
+            ),
+            local=p.get("municipio_nome", "")
+        )
         # municipio_nome já foi resolvido por resolver_municipios()
  
         if d <= 15:
@@ -110,7 +121,8 @@ def montar_whatsapp(urgentes, atencao, avisos):
                 f"   📄 {p['object']}\n"
                 f"   💰 Concedente: {p['val_conc_fmt']} | Licitado: {p['val_lic_fmt']}\n"
                 f"   📅 Vencimento: {p['venc_fmt']} _({p['dias']} dias)_\n"
-                f"   🔗 {p['link']}"
+                f"   🔗 {p['link']}\n"
+                f"   🗓️ Calendar: {p['calendar_link']}"
             )
         return f"{emoji} *{titulo}*\n\n" + "\n\n".join(items)
  
@@ -137,7 +149,8 @@ def montar_telegram(urgentes, atencao, avisos):
                 f"   📄 {p['object']}\n"
                 f"   💰 Concedente: {p['val_conc_fmt']} | Licitado: {p['val_lic_fmt']}\n"
                 f"   📅 Vencimento: {p['venc_fmt']} <i>({p['dias']} dias)</i>\n"
-                f"   🔗 <a href=\"{p['link']}\">Acessar processo</a>"
+                f"   🔗 <a href=\"{p['link']}\">Acessar processo</a>\n"
+                f"   🗓️ <a href=\"{p['calendar_link']}\">Google Calendar</a>"
             )
         return f"{emoji} <b>{titulo}</b>\n\n" + "\n\n".join(items)
  
@@ -170,6 +183,9 @@ def montar_html_email(urgentes, atencao, avisos):
               <td style="padding:10px 12px;border-bottom:1px solid #f0f0f0;">
                 <a href="{p['link']}" style="color:#4361ee;font-weight:600;">Acessar</a>
               </td>
+              <td style="padding:10px 12px;border-bottom:1px solid #f0f0f0;">
+                <a href="{p['calendar_link']}" style="color:#166534;font-weight:600;">Adicionar</a>
+              </td>
             </tr>"""
  
         return f"""
@@ -196,6 +212,8 @@ def montar_html_email(urgentes, atencao, avisos):
                            color:#6b7280;font-size:11px;text-transform:uppercase;">Restam</th>
                 <th style="padding:9px 12px;text-align:left;border-bottom:2px solid #e5e7eb;
                            color:#6b7280;font-size:11px;text-transform:uppercase;">Link</th>
+                <th style="padding:9px 12px;text-align:left;border-bottom:2px solid #e5e7eb;
+                           color:#6b7280;font-size:11px;text-transform:uppercase;">Calendar</th>
               </tr>
             </thead>
             <tbody>{linhas_html}</tbody>
@@ -230,6 +248,7 @@ def montar_html_email(urgentes, atencao, avisos):
 # ──────────────────────────────────────────────
  
 def main():
+    origem = os.environ.get("NOTIFICACAO_ORIGEM", "semanal").strip().lower()
     print("🔍 Buscando processos no Supabase...")
     processos = buscar_processos()
     print(f"   {len(processos)} processo(s) com vencimento nos próximos 45 dias.")
@@ -243,8 +262,9 @@ def main():
  
     print(f"   🔴 {len(urgentes)} URGENTE(s) · 🟡 {len(atencao)} ATENÇÃO · 🔵 {len(avisos)} AVISO(s)")
  
+    prefixo = "📋 Relatório de Vigências" if origem == "semanal" else "📋 Relatório sob demanda de Vigências"
     assunto = (
-        f"📋 Relatório de Vigências — "
+        f"{prefixo} — "
         f"{len(urgentes)} URGENTE(s), {len(atencao)} ATENÇÃO, {len(avisos)} AVISO(s)"
     )
  
@@ -259,7 +279,7 @@ def main():
         html_email       = montar_html_email(urgentes, atencao, avisos),
         texto_whatsapp   = montar_whatsapp(urgentes, atencao, avisos),
         texto_telegram   = montar_telegram(urgentes, atencao, avisos),
-        ntfy_titulo      = "Relatório Semanal de Vigências",
+        ntfy_titulo      = "Relatório Semanal de Vigências" if origem == "semanal" else "Relatório sob demanda de Vigências",
         ntfy_mensagem    = " · ".join(ntfy_partes),
         ntfy_prioridade  = ntfy_prioridade,
         ntfy_link        = SISTEMA_URL

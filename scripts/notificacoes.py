@@ -13,10 +13,10 @@ Como funciona o CallMeBot para múltiplos números:
 import os
 import smtplib
 import requests
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from datetime import datetime
+from datetime import datetime, timedelta
  
  
 # ──────────────────────────────────────────────
@@ -26,6 +26,14 @@ from datetime import datetime
 GMAIL_USER     = os.environ.get("GMAIL_USER", "")
 GMAIL_PASS     = os.environ.get("GMAIL_PASS", "")
 EMAILS_DESTINO = [e.strip() for e in os.environ.get("EMAILS_DESTINO", "").split(",") if e.strip()]
+
+# Compatibilidade: caso EMAILS_DESTINO não esteja preenchido, aceita variáveis legadas.
+if not EMAILS_DESTINO:
+    for fallback_email in (os.environ.get("EMAIL_DESTINO", ""), os.environ.get("NOTIFY_EMAIL", ""), "casludn@gmail.com"):
+        fallback_email = fallback_email.strip()
+        if fallback_email:
+            EMAILS_DESTINO = [fallback_email]
+            break
  
 # CallMeBot — formato do secret CALLMEBOT_NUMEROS:
 #   "5548999990000:apikey1,5511988880000:apikey2,5521977770000:apikey3"
@@ -41,6 +49,13 @@ for entry in _callmebot_raw.split(","):
         apikey = partes[1].strip()
         if numero and apikey:
             CALLMEBOT_DESTINATARIOS.append({"numero": numero, "apikey": apikey})
+
+# Compatibilidade com secrets legados (WHATSAPP_PHONE + CALLMEBOT_API_KEY)
+if not CALLMEBOT_DESTINATARIOS:
+    fallback_numero = os.environ.get("WHATSAPP_PHONE", "").strip() or "554891897320"
+    fallback_apikey = os.environ.get("CALLMEBOT_API_KEY", "").strip()
+    if fallback_numero and fallback_apikey:
+        CALLMEBOT_DESTINATARIOS.append({"numero": fallback_numero, "apikey": fallback_apikey})
  
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "")
 TELEGRAM_CHATS = [c.strip() for c in os.environ.get("TELEGRAM_CHATS", "").split(",") if c.strip()]
@@ -88,8 +103,32 @@ def dias_restantes(data_iso):
  
 def link_processo(processo_id):
     return f"{SISTEMA_URL}/{processo_id}" if SISTEMA_URL else "#"
- 
- 
+
+
+def link_google_calendar(titulo: str, data_iso: str, descricao: str = "", local: str = ""):
+    """Gera link público para criar evento de dia inteiro no Google Calendar."""
+    if not data_iso:
+        return ""
+
+    try:
+        inicio = datetime.strptime(str(data_iso)[:10], "%Y-%m-%d").date()
+    except ValueError:
+        return ""
+
+    fim = inicio + timedelta(days=1)
+    query = {
+        "action": "TEMPLATE",
+        "text": titulo[:120],
+        "dates": f"{inicio.strftime('%Y%m%d')}/{fim.strftime('%Y%m%d')}",
+    }
+    if descricao:
+        query["details"] = descricao[:1800]
+    if local:
+        query["location"] = local[:300]
+
+    return f"https://calendar.google.com/calendar/render?{urlencode(query)}"
+
+
 def buscar_nome_municipio(municipality_id):
     """
     Busca o nome do município na tabela 'municipalities' pelo ID.
