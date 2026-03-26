@@ -32,9 +32,9 @@ def buscar_processos():
     url = f"{SUPABASE_URL}/rest/v1/{SUPABASE_TABLE}"
     params = {
         # Adapte os nomes das colunas conforme sua tabela
-        "select": "id,numero_processo,municipio,objeto,valor_concedente,valor_licitado,data_vigencia",
-        "data_vigencia": f"gte.{hoje.isoformat()}",
-        "order": "data_vigencia.asc"
+        "select": "id,process_number,municipality_id,object,total_concedente_value,licitado_value,vigencia_date",
+        "vigencia_date": f"gte.{hoje.isoformat()}",
+        "order": "vigencia_date.asc"
     }
     headers = {
         "apikey": SUPABASE_KEY,
