@@ -35,6 +35,21 @@ function getWhatsAppRecipients() {
   return [];
 }
 
+function getTelegramChatIds() {
+  const fromList = (process.env.TELEGRAM_CHATS || '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  if (fromList.length > 0) return fromList;
+
+  if (process.env.TELEGRAM_CHAT_ID?.trim()) {
+    return [process.env.TELEGRAM_CHAT_ID.trim()];
+  }
+
+  return [];
+}
+
 function formatCurrency(value) {
   if (value === null || value === undefined) return 'N/A';
   return new Intl.NumberFormat('pt-BR', {
@@ -47,6 +62,47 @@ function formatDate(dateStr) {
   if (!dateStr) return 'N/A';
   const [year, month, day] = dateStr.split('-');
   return `${day}/${month}/${year}`;
+}
+
+function escapeHtml(value) {
+  return String(value ?? 'N/A')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;');
+}
+
+function splitMessage(text, maxLen = 900) {
+  if (!text) return [];
+  if (text.length <= maxLen) return [text];
+
+  const lines = text.split('\n');
+  const chunks = [];
+  let current = '';
+
+  for (const line of lines) {
+    const candidate = current ? `${current}\n${line}` : line;
+    if (candidate.length <= maxLen) {
+      current = candidate;
+      continue;
+    }
+
+    if (current) chunks.push(current);
+
+    if (line.length <= maxLen) {
+      current = line;
+      continue;
+    }
+
+    let start = 0;
+    while (start < line.length) {
+      chunks.push(line.slice(start, start + maxLen));
+      start += maxLen;
+    }
+    current = '';
+  }
+
+  if (current) chunks.push(current);
+  return chunks;
 }
 
 function getDaysUntil(dateStr) {
@@ -195,31 +251,38 @@ function buildEmailHtml({ urgent, warning, notice }) {
 
 function buildWhatsAppSummary({ urgent, warning, notice }) {
   const lines = [];
-  lines.push(`📋 *ALERTA SEMANAL — ${new Date().toLocaleDateString('pt-BR')}*\n`);
+  const total = urgent.length + warning.length + notice.length;
+
+  lines.push(`📋 *ALERTA DE VENCIMENTOS*`);
+  lines.push(`📅 ${new Date().toLocaleDateString('pt-BR')}`);
+  lines.push(`📦 Total monitorado: *${total} contrato(s)*\n`);
 
   if (urgent.length > 0) {
-    lines.push(`🔴 *URGENTE — até 15 dias (${urgent.length})*`);
+    lines.push(`🔴 *URGENTE* · até 15 dias (${urgent.length})`);
     for (const c of urgent) {
-      lines.push(`• ${c.process_number ?? 'N/A'} | ${c.municipalities?.name ?? 'N/A'} | ${formatDate(c.vigencia_date)} (${c.daysLeft}d)`);
-      lines.push(`  📅 Calendar: ${buildGoogleCalendarLink(c)}`);
+      lines.push(`• Proc. ${c.process_number ?? 'N/A'} · ${c.municipalities?.name ?? 'N/A'}`);
+      lines.push(`  ⏳ Vence em ${c.daysLeft} dia(s) (${formatDate(c.vigencia_date)})`);
+      lines.push(`  📅 Agenda: ${buildGoogleCalendarLink(c)}`);
     }
     lines.push('');
   }
 
   if (warning.length > 0) {
-    lines.push(`🟠 *ATENÇÃO — 16 a 30 dias (${warning.length})*`);
+    lines.push(`🟠 *ATENÇÃO* · 16 a 30 dias (${warning.length})`);
     for (const c of warning) {
-      lines.push(`• ${c.process_number ?? 'N/A'} | ${c.municipalities?.name ?? 'N/A'} | ${formatDate(c.vigencia_date)} (${c.daysLeft}d)`);
-      lines.push(`  📅 Calendar: ${buildGoogleCalendarLink(c)}`);
+      lines.push(`• Proc. ${c.process_number ?? 'N/A'} · ${c.municipalities?.name ?? 'N/A'}`);
+      lines.push(`  ⏳ Vence em ${c.daysLeft} dia(s) (${formatDate(c.vigencia_date)})`);
+      lines.push(`  📅 Agenda: ${buildGoogleCalendarLink(c)}`);
     }
     lines.push('');
   }
 
   if (notice.length > 0) {
-    lines.push(`🔵 *AVISO — 31 a 45 dias (${notice.length})*`);
+    lines.push(`🔵 *AVISO* · 31 a 45 dias (${notice.length})`);
     for (const c of notice) {
-      lines.push(`• ${c.process_number ?? 'N/A'} | ${c.municipalities?.name ?? 'N/A'} | ${formatDate(c.vigencia_date)} (${c.daysLeft}d)`);
-      lines.push(`  📅 Calendar: ${buildGoogleCalendarLink(c)}`);
+      lines.push(`• Proc. ${c.process_number ?? 'N/A'} · ${c.municipalities?.name ?? 'N/A'}`);
+      lines.push(`  ⏳ Vence em ${c.daysLeft} dia(s) (${formatDate(c.vigencia_date)})`);
+      lines.push(`  📅 Agenda: ${buildGoogleCalendarLink(c)}`);
     }
   }
 
@@ -228,44 +291,47 @@ function buildWhatsAppSummary({ urgent, warning, notice }) {
 
 function buildTelegramSummary({ urgent, warning, notice }) {
   const lines = [];
-  lines.push(`📋 *ALERTA SEMANAL DE CONTRATOS*`);
-  lines.push(`📅 ${new Date().toLocaleDateString('pt-BR')}\n`);
+  const total = urgent.length + warning.length + notice.length;
+
+  lines.push(`<b>📋 ALERTA DE VENCIMENTOS</b>`);
+  lines.push(`📅 ${new Date().toLocaleDateString('pt-BR')}`);
+  lines.push(`📦 Total monitorado: <b>${total} contrato(s)</b>\n`);
 
   if (urgent.length > 0) {
-    lines.push(`🔴 *URGENTE — até 15 dias (${urgent.length})*`);
+    lines.push(`<b>🔴 URGENTE — até 15 dias (${urgent.length})</b>`);
     for (const c of urgent) {
-      lines.push(`• *${c.process_number ?? 'N/A'}*`);
-      lines.push(`  🏙 ${c.municipalities?.name ?? 'N/A'}`);
-      lines.push(`  📄 ${c.object ?? 'N/A'}`);
-      lines.push(`  💰 ${formatCurrency(c.total_concedente_value)}`);
-      lines.push(`  📅 ${formatDate(c.vigencia_date)} \\(${c.daysLeft} dias\\)`);
-      lines.push(`  🔗 [Google Calendar](${buildGoogleCalendarLink(c)})`);
+      lines.push(`• <b>${escapeHtml(c.process_number)}</b>`);
+      lines.push(`  🏙 ${escapeHtml(c.municipalities?.name)}`);
+      lines.push(`  📄 ${escapeHtml(c.object)}`);
+      lines.push(`  💰 ${escapeHtml(formatCurrency(c.total_concedente_value))}`);
+      lines.push(`  ⏳ ${c.daysLeft} dia(s) · ${formatDate(c.vigencia_date)}`);
+      lines.push(`  🔗 <a href="${buildGoogleCalendarLink(c)}">Google Calendar</a>`);
     }
     lines.push('');
   }
 
   if (warning.length > 0) {
-    lines.push(`🟠 *ATENÇÃO — 16 a 30 dias (${warning.length})*`);
+    lines.push(`<b>🟠 ATENÇÃO — 16 a 30 dias (${warning.length})</b>`);
     for (const c of warning) {
-      lines.push(`• *${c.process_number ?? 'N/A'}*`);
-      lines.push(`  🏙 ${c.municipalities?.name ?? 'N/A'}`);
-      lines.push(`  📄 ${c.object ?? 'N/A'}`);
-      lines.push(`  💰 ${formatCurrency(c.total_concedente_value)}`);
-      lines.push(`  📅 ${formatDate(c.vigencia_date)} \\(${c.daysLeft} dias\\)`);
-      lines.push(`  🔗 [Google Calendar](${buildGoogleCalendarLink(c)})`);
+      lines.push(`• <b>${escapeHtml(c.process_number)}</b>`);
+      lines.push(`  🏙 ${escapeHtml(c.municipalities?.name)}`);
+      lines.push(`  📄 ${escapeHtml(c.object)}`);
+      lines.push(`  💰 ${escapeHtml(formatCurrency(c.total_concedente_value))}`);
+      lines.push(`  ⏳ ${c.daysLeft} dia(s) · ${formatDate(c.vigencia_date)}`);
+      lines.push(`  🔗 <a href="${buildGoogleCalendarLink(c)}">Google Calendar</a>`);
     }
     lines.push('');
   }
 
   if (notice.length > 0) {
-    lines.push(`🔵 *AVISO — 31 a 45 dias (${notice.length})*`);
+    lines.push(`<b>🔵 AVISO — 31 a 45 dias (${notice.length})</b>`);
     for (const c of notice) {
-      lines.push(`• *${c.process_number ?? 'N/A'}*`);
-      lines.push(`  🏙 ${c.municipalities?.name ?? 'N/A'}`);
-      lines.push(`  📄 ${c.object ?? 'N/A'}`);
-      lines.push(`  💰 ${formatCurrency(c.total_concedente_value)}`);
-      lines.push(`  📅 ${formatDate(c.vigencia_date)} \\(${c.daysLeft} dias\\)`);
-      lines.push(`  🔗 [Google Calendar](${buildGoogleCalendarLink(c)})`);
+      lines.push(`• <b>${escapeHtml(c.process_number)}</b>`);
+      lines.push(`  🏙 ${escapeHtml(c.municipalities?.name)}`);
+      lines.push(`  📄 ${escapeHtml(c.object)}`);
+      lines.push(`  💰 ${escapeHtml(formatCurrency(c.total_concedente_value))}`);
+      lines.push(`  ⏳ ${c.daysLeft} dia(s) · ${formatDate(c.vigencia_date)}`);
+      lines.push(`  🔗 <a href="${buildGoogleCalendarLink(c)}">Google Calendar</a>`);
     }
   }
 
@@ -297,23 +363,30 @@ async function sendWhatsApp(groups) {
     console.warn('⚠️ WhatsApp não enviado: configure CALLMEBOT_NUMEROS ou WHATSAPP_PHONE + CALLMEBOT_API_KEY.');
     return;
   }
-
-  const encoded = encodeURIComponent(msg);
   let success = 0;
+  const parts = splitMessage(msg, 850);
 
   for (const recipient of recipients) {
-    const url = `https://api.callmebot.com/whatsapp.php?phone=${recipient.phone}&text=${encoded}&apikey=${recipient.apiKey}`;
-    try {
-      const res = await fetch(url);
-      const body = await res.text();
-      if (res.ok && body.toLowerCase().includes('queued')) {
-        success += 1;
-      } else {
-        console.error(`⚠️ Falha WhatsApp (${recipient.phone}) — status ${res.status} — ${body}`);
+    let recipientSuccess = true;
+    for (const [index, part] of parts.entries()) {
+      const finalPart = parts.length > 1 ? `[${index + 1}/${parts.length}]\n${part}` : part;
+      const encoded = encodeURIComponent(finalPart);
+      const url = `https://api.callmebot.com/whatsapp.php?phone=${recipient.phone}&text=${encoded}&apikey=${recipient.apiKey}`;
+      try {
+        const res = await fetch(url);
+        const body = await res.text();
+        if (!(res.ok && body.toLowerCase().includes('queued'))) {
+          recipientSuccess = false;
+          console.error(`⚠️ Falha WhatsApp (${recipient.phone}) parte ${index + 1}/${parts.length} — status ${res.status} — ${body}`);
+          break;
+        }
+      } catch (err) {
+        recipientSuccess = false;
+        console.error(`❌ Erro WhatsApp (${recipient.phone}) parte ${index + 1}/${parts.length}:`, err.message);
+        break;
       }
-    } catch (err) {
-      console.error(`❌ Erro WhatsApp (${recipient.phone}):`, err.message);
     }
+    if (recipientSuccess) success += 1;
   }
 
   console.log(`✅ WhatsApp enviado para ${success}/${recipients.length} número(s).`);
@@ -321,23 +394,50 @@ async function sendWhatsApp(groups) {
 
 async function sendTelegram(groups) {
   const msg = buildTelegramSummary(groups);
-  const url = `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`;
-  try {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: process.env.TELEGRAM_CHAT_ID,
-        text: msg,
-        parse_mode: 'MarkdownV2',
-      }),
-    });
-    const data = await res.json();
-    if (data.ok) console.log('✅ Telegram enviado com sucesso');
-    else console.error('❌ Erro Telegram:', JSON.stringify(data));
-  } catch (err) {
-    console.error('❌ Erro Telegram:', err.message);
+  const token = process.env.TELEGRAM_BOT_TOKEN || process.env.TELEGRAM_TOKEN;
+  const chatIds = getTelegramChatIds();
+
+  if (!token || chatIds.length === 0) {
+    console.warn('⚠️ Telegram não enviado: configure TELEGRAM_BOT_TOKEN/TELEGRAM_TOKEN e TELEGRAM_CHAT_ID/TELEGRAM_CHATS.');
+    return;
   }
+
+  const url = `https://api.telegram.org/bot${token}/sendMessage`;
+  const parts = splitMessage(msg, 3900);
+  let success = 0;
+
+  for (const chatId of chatIds) {
+    let chatOk = true;
+    for (const [index, part] of parts.entries()) {
+      const finalPart = parts.length > 1 ? `<b>Parte ${index + 1}/${parts.length}</b>\n${part}` : part;
+      try {
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text: finalPart,
+            parse_mode: 'HTML',
+            disable_web_page_preview: true,
+          }),
+        });
+        const data = await res.json();
+        if (!data.ok) {
+          chatOk = false;
+          console.error(`❌ Erro Telegram chat ${chatId} parte ${index + 1}/${parts.length}:`, JSON.stringify(data));
+          break;
+        }
+      } catch (err) {
+        chatOk = false;
+        console.error(`❌ Erro Telegram chat ${chatId} parte ${index + 1}/${parts.length}:`, err.message);
+        break;
+      }
+    }
+
+    if (chatOk) success += 1;
+  }
+
+  console.log(`✅ Telegram enviado para ${success}/${chatIds.length} chat(s).`);
 }
 
 async function main() {
