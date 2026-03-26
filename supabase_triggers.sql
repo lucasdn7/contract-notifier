@@ -4,10 +4,10 @@
 -- ================================================================
 -- 
 -- ANTES DE COLAR: substitua os valores abaixo:
---   SEU_USUARIO_GITHUB  → seu usuário ou organização no GitHub
---   SEU_REPOSITORIO     → nome do repositório que criou
---   SEU_TOKEN_GITHUB    → Personal Access Token com permissão "repo"
---   processos           → nome real da sua tabela
+--   SEU_USUARIO_GITHUB  → lucasdn7
+--   SEU_REPOSITORIO     → contract-notifier
+--   SEU_TOKEN_GITHUB    → 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
+--   processos           → processes
 --
 -- Como gerar o Personal Access Token (PAT):
 --   1. GitHub → Settings → Developer Settings → Personal Access Tokens → Tokens (classic)
