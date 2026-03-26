@@ -8,6 +8,33 @@ const supabase = createClient(
 
 const resend = new Resend(process.env.RESEND_API_KEY);
 
+function getEmailRecipients() {
+  const raw = process.env.NOTIFY_EMAIL || process.env.EMAILS_DESTINO || '';
+  return raw.split(',').map((item) => item.trim()).filter(Boolean);
+}
+
+function getWhatsAppRecipients() {
+  const raw = process.env.CALLMEBOT_NUMEROS || '';
+  const recipients = raw
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .map((entry) => {
+      const [phone, apiKey] = entry.split(':').map((item) => item?.trim());
+      if (!phone || !apiKey) return null;
+      return { phone, apiKey };
+    })
+    .filter(Boolean);
+
+  if (recipients.length > 0) return recipients;
+
+  if (process.env.WHATSAPP_PHONE && process.env.CALLMEBOT_API_KEY) {
+    return [{ phone: process.env.WHATSAPP_PHONE, apiKey: process.env.CALLMEBOT_API_KEY }];
+  }
+
+  return [];
+}
+
 function formatCurrency(value) {
   if (value === null || value === undefined) return 'N/A';
   return new Intl.NumberFormat('pt-BR', {
@@ -27,6 +54,34 @@ function getDaysUntil(dateStr) {
   today.setHours(0, 0, 0, 0);
   const target = new Date(dateStr + 'T00:00:00');
   return Math.ceil((target - today) / (1000 * 60 * 60 * 24));
+}
+
+function buildGoogleCalendarLink(contract) {
+  if (!contract?.vigencia_date) return '';
+
+  const start = contract.vigencia_date.replaceAll('-', '');
+  const endDate = new Date(`${contract.vigencia_date}T00:00:00`);
+  endDate.setDate(endDate.getDate() + 1);
+  const end = endDate.toISOString().slice(0, 10).replaceAll('-', '');
+
+  const title = `Vencimento do processo ${contract.process_number ?? 'N/A'}`;
+  const details = [
+    `Processo: ${contract.process_number ?? 'N/A'}`,
+    `Município: ${contract.municipalities?.name ?? 'N/A'}`,
+    `Objeto: ${contract.object ?? 'N/A'}`,
+    `Valor concedente: ${formatCurrency(contract.total_concedente_value)}`,
+    `Valor licitado: ${formatCurrency(contract.licitado_value)}`,
+    `Vigência: ${formatDate(contract.vigencia_date)}`,
+  ].join('\n');
+
+  const params = new URLSearchParams({
+    action: 'TEMPLATE',
+    text: title,
+    dates: `${start}/${end}`,
+    details,
+  });
+
+  return `https://calendar.google.com/calendar/render?${params.toString()}`;
 }
 
 async function getExpiringContracts() {
@@ -79,6 +134,9 @@ function buildTable(contracts) {
       <td style="padding:12px 10px;border-bottom:1px solid #eee;font-size:13px;white-space:nowrap">${formatCurrency(c.licitado_value)}</td>
       <td style="padding:12px 10px;border-bottom:1px solid #eee;font-size:13px;white-space:nowrap;font-weight:bold">${formatDate(c.vigencia_date)}</td>
       <td style="padding:12px 10px;border-bottom:1px solid #eee;font-size:13px;text-align:center;font-weight:bold">${c.daysLeft} dias</td>
+      <td style="padding:12px 10px;border-bottom:1px solid #eee;font-size:13px;text-align:center">
+        <a href="${buildGoogleCalendarLink(c)}" style="color:#2563eb;text-decoration:none;font-weight:600">Adicionar</a>
+      </td>
     </tr>
   `).join('');
 
@@ -93,6 +151,7 @@ function buildTable(contracts) {
           <th style="padding:12px 10px;text-align:left;font-size:12px;color:#555;border-bottom:2px solid #dee2e6">VALOR LICITADO</th>
           <th style="padding:12px 10px;text-align:left;font-size:12px;color:#555;border-bottom:2px solid #dee2e6">VENCIMENTO</th>
           <th style="padding:12px 10px;text-align:center;font-size:12px;color:#555;border-bottom:2px solid #dee2e6">DIAS RESTANTES</th>
+          <th style="padding:12px 10px;text-align:center;font-size:12px;color:#555;border-bottom:2px solid #dee2e6">GOOGLE CALENDAR</th>
         </tr>
       </thead>
       <tbody>${rows}</tbody>
@@ -142,6 +201,7 @@ function buildWhatsAppSummary({ urgent, warning, notice }) {
     lines.push(`🔴 *URGENTE — até 15 dias (${urgent.length})*`);
     for (const c of urgent) {
       lines.push(`• ${c.process_number ?? 'N/A'} | ${c.municipalities?.name ?? 'N/A'} | ${formatDate(c.vigencia_date)} (${c.daysLeft}d)`);
+      lines.push(`  📅 Calendar: ${buildGoogleCalendarLink(c)}`);
     }
     lines.push('');
   }
@@ -150,6 +210,7 @@ function buildWhatsAppSummary({ urgent, warning, notice }) {
     lines.push(`🟠 *ATENÇÃO — 16 a 30 dias (${warning.length})*`);
     for (const c of warning) {
       lines.push(`• ${c.process_number ?? 'N/A'} | ${c.municipalities?.name ?? 'N/A'} | ${formatDate(c.vigencia_date)} (${c.daysLeft}d)`);
+      lines.push(`  📅 Calendar: ${buildGoogleCalendarLink(c)}`);
     }
     lines.push('');
   }
@@ -158,6 +219,7 @@ function buildWhatsAppSummary({ urgent, warning, notice }) {
     lines.push(`🔵 *AVISO — 31 a 45 dias (${notice.length})*`);
     for (const c of notice) {
       lines.push(`• ${c.process_number ?? 'N/A'} | ${c.municipalities?.name ?? 'N/A'} | ${formatDate(c.vigencia_date)} (${c.daysLeft}d)`);
+      lines.push(`  📅 Calendar: ${buildGoogleCalendarLink(c)}`);
     }
   }
 
@@ -177,6 +239,7 @@ function buildTelegramSummary({ urgent, warning, notice }) {
       lines.push(`  📄 ${c.object ?? 'N/A'}`);
       lines.push(`  💰 ${formatCurrency(c.total_concedente_value)}`);
       lines.push(`  📅 ${formatDate(c.vigencia_date)} \\(${c.daysLeft} dias\\)`);
+      lines.push(`  🔗 [Google Calendar](${buildGoogleCalendarLink(c)})`);
     }
     lines.push('');
   }
@@ -189,6 +252,7 @@ function buildTelegramSummary({ urgent, warning, notice }) {
       lines.push(`  📄 ${c.object ?? 'N/A'}`);
       lines.push(`  💰 ${formatCurrency(c.total_concedente_value)}`);
       lines.push(`  📅 ${formatDate(c.vigencia_date)} \\(${c.daysLeft} dias\\)`);
+      lines.push(`  🔗 [Google Calendar](${buildGoogleCalendarLink(c)})`);
     }
     lines.push('');
   }
@@ -201,6 +265,7 @@ function buildTelegramSummary({ urgent, warning, notice }) {
       lines.push(`  📄 ${c.object ?? 'N/A'}`);
       lines.push(`  💰 ${formatCurrency(c.total_concedente_value)}`);
       lines.push(`  📅 ${formatDate(c.vigencia_date)} \\(${c.daysLeft} dias\\)`);
+      lines.push(`  🔗 [Google Calendar](${buildGoogleCalendarLink(c)})`);
     }
   }
 
@@ -209,9 +274,15 @@ function buildTelegramSummary({ urgent, warning, notice }) {
 
 async function sendEmail(groups) {
   const total = groups.urgent.length + groups.warning.length + groups.notice.length;
+  const recipients = getEmailRecipients();
+  if (recipients.length === 0) {
+    console.warn('⚠️ E-mail não enviado: configure NOTIFY_EMAIL ou EMAILS_DESTINO.');
+    return;
+  }
+
   const { error } = await resend.emails.send({
     from: 'onboarding@resend.dev',
-    to: process.env.NOTIFY_EMAIL,
+    to: recipients,
     subject: `📋 Alerta Semanal — ${total} contrato(s) próximo(s) ao vencimento — ${new Date().toLocaleDateString('pt-BR')}`,
     html: buildEmailHtml(groups),
   });
@@ -221,15 +292,31 @@ async function sendEmail(groups) {
 
 async function sendWhatsApp(groups) {
   const msg = buildWhatsAppSummary(groups);
-  const encoded = encodeURIComponent(msg);
-  const url = `https://api.callmebot.com/whatsapp.php?phone=${process.env.WHATSAPP_PHONE}&text=${encoded}&apikey=${process.env.CALLMEBOT_API_KEY}`;
-  try {
-    const res = await fetch(url);
-    const body = await res.text();
-    console.log(`✅ WhatsApp enviado — status ${res.status} — ${body}`);
-  } catch (err) {
-    console.error('❌ Erro WhatsApp:', err.message);
+  const recipients = getWhatsAppRecipients();
+  if (recipients.length === 0) {
+    console.warn('⚠️ WhatsApp não enviado: configure CALLMEBOT_NUMEROS ou WHATSAPP_PHONE + CALLMEBOT_API_KEY.');
+    return;
   }
+
+  const encoded = encodeURIComponent(msg);
+  let success = 0;
+
+  for (const recipient of recipients) {
+    const url = `https://api.callmebot.com/whatsapp.php?phone=${recipient.phone}&text=${encoded}&apikey=${recipient.apiKey}`;
+    try {
+      const res = await fetch(url);
+      const body = await res.text();
+      if (res.ok && body.toLowerCase().includes('queued')) {
+        success += 1;
+      } else {
+        console.error(`⚠️ Falha WhatsApp (${recipient.phone}) — status ${res.status} — ${body}`);
+      }
+    } catch (err) {
+      console.error(`❌ Erro WhatsApp (${recipient.phone}):`, err.message);
+    }
+  }
+
+  console.log(`✅ WhatsApp enviado para ${success}/${recipients.length} número(s).`);
 }
 
 async function sendTelegram(groups) {
