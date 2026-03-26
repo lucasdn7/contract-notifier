@@ -3,20 +3,29 @@ vigencia_editada.py
 Fluxo 3 — Disparado via repository_dispatch quando o Supabase
 detecta UPDATE na data_vigencia de um processo.
 Compara data antiga vs nova e notifica com a diferença.
+ 
+Mapeamento de colunas (Supabase):
+  id                    → id
+  process_number        → número do processo
+  municipality_id       → FK para tabela municipalities (id, name)
+  object                → objeto do processo
+  total_concedente_value → valor concedente
+  licitado_value        → valor licitado
+  vigencia_date         → data de vigência
 """
-
+ 
 import os
 import sys
 import json
 from datetime import datetime, date
-
+ 
 sys.path.insert(0, os.path.dirname(__file__))
 from notificacoes import (
     fmt_moeda, fmt_data, dias_restantes, link_processo,
-    notificar_todos, SISTEMA_URL
+    notificar_todos, buscar_nome_municipio, SISTEMA_URL
 )
-
-
+ 
+ 
 def main():
     payload_raw = os.environ.get("EVENT_PAYLOAD", "{}")
     try:
@@ -24,39 +33,42 @@ def main():
     except json.JSONDecodeError:
         print(f"❌ Payload inválido: {payload_raw[:200]}")
         sys.exit(1)
-
-    novo   = payload.get("record")    or payload
+ 
+    novo   = payload.get("record")     or payload
     antigo = payload.get("old_record") or {}
-
-    data_nova   = novo.get("data_vigencia")
-    data_antiga = antigo.get("data_vigencia")
-
-    print(f"📥 Proc. {novo.get('numero_processo')} | Antiga: {data_antiga} → Nova: {data_nova}")
-
+ 
+    data_nova   = novo.get("vigencia_date")
+    data_antiga = antigo.get("vigencia_date")
+ 
+    print(f"📥 Proc. {novo.get('process_number')} | Antiga: {data_antiga} → Nova: {data_nova}")
+ 
     # Se a data não mudou, ignora
     if not data_nova or str(data_nova)[:10] == str(data_antiga or "")[:10]:
         print("ℹ️  Data de vigência não alterada — nenhuma notificação enviada.")
         return
-
-    dias  = dias_restantes(data_nova)
-    venc_novo  = fmt_data(data_nova)
+ 
+    # Resolve o nome do município via FK
+    municipio_nome = buscar_nome_municipio(novo.get("municipality_id"))
+ 
+    dias        = dias_restantes(data_nova)
+    venc_novo   = fmt_data(data_nova)
     venc_antigo = fmt_data(data_antiga) if data_antiga else "Não informada"
-    conc  = fmt_moeda(novo.get("valor_concedente"))
-    lic   = fmt_moeda(novo.get("valor_licitado"))
-    lnk   = link_processo(novo.get("id") or novo.get("numero_processo", ""))
-    agora = datetime.now().strftime("%d/%m/%Y às %H:%M")
-
+    conc        = fmt_moeda(novo.get("total_concedente_value"))
+    lic         = fmt_moeda(novo.get("licitado_value"))
+    lnk         = link_processo(novo.get("id") or novo.get("process_number", ""))
+    agora       = datetime.now().strftime("%d/%m/%Y às %H:%M")
+ 
     # Calcula diferença entre datas
-    diff_dias  = None
+    diff_dias      = None
     diff_texto_wpp = ""
     diff_texto_tg  = ""
-    cor_diff   = "#92400e"
-    bg_diff    = "#fef9c3"
-
+    cor_diff  = "#92400e"
+    bg_diff   = "#fef9c3"
+ 
     if data_antiga:
         try:
-            d_ant = datetime.strptime(str(data_antiga)[:10], "%Y-%m-%d").date()
-            d_nov = datetime.strptime(str(data_nova)[:10],   "%Y-%m-%d").date()
+            d_ant     = datetime.strptime(str(data_antiga)[:10], "%Y-%m-%d").date()
+            d_nov     = datetime.strptime(str(data_nova)[:10],   "%Y-%m-%d").date()
             diff_dias = (d_nov - d_ant).days
             if diff_dias > 0:
                 diff_texto_wpp = f"⬆️ Vigência *ampliada* em {diff_dias} dias."
@@ -68,13 +80,13 @@ def main():
                 cor_diff, bg_diff = "#b91c1c", "#fee2e2"
         except ValueError:
             pass
-
+ 
     # ─── WHATSAPP ──────────────────────────────────────────
     linhas_wpp = [
         "✏️ *VIGÊNCIA ALTERADA*", "",
-        f"📌 *Processo:* {novo.get('numero_processo')}",
-        f"🏙️ *Município:* {novo.get('municipio')}",
-        f"📄 *Objeto:* {novo.get('objeto')}",
+        f"📌 *Processo:* {novo.get('process_number')}",
+        f"🏙️ *Município:* {municipio_nome}",
+        f"📄 *Objeto:* {novo.get('object')}",
         f"💰 *Valor concedente:* {conc}",
         f"💰 *Valor licitado:* {lic}", "",
         f"🗓️ *Data anterior:* {venc_antigo}",
@@ -84,13 +96,13 @@ def main():
         linhas_wpp.append(diff_texto_wpp)
     linhas_wpp += [f"🔗 {lnk}", "", f"_Alterado em {agora}_"]
     wpp = "\n".join(linhas_wpp)
-
+ 
     # ─── TELEGRAM ──────────────────────────────────────────
     linhas_tg = [
         "✏️ <b>VIGÊNCIA ALTERADA</b>", "",
-        f"📌 <b>Processo:</b> {novo.get('numero_processo')}",
-        f"🏙️ <b>Município:</b> {novo.get('municipio')}",
-        f"📄 <b>Objeto:</b> {novo.get('objeto')}",
+        f"📌 <b>Processo:</b> {novo.get('process_number')}",
+        f"🏙️ <b>Município:</b> {municipio_nome}",
+        f"📄 <b>Objeto:</b> {novo.get('object')}",
         f"💰 <b>Valor concedente:</b> {conc}",
         f"💰 <b>Valor licitado:</b> {lic}", "",
         f"🗓️ <b>Data anterior:</b> {venc_antigo}",
@@ -100,13 +112,13 @@ def main():
         linhas_tg.append(diff_texto_tg)
     linhas_tg += [f"🔗 <a href=\"{lnk}\">Acessar processo</a>", "", f"<i>Alterado em {agora}</i>"]
     tg = "\n".join(linhas_tg)
-
+ 
     # ─── E-MAIL HTML ───────────────────────────────────────
     diff_html = ""
     if diff_dias is not None:
         seta = f"⬆️ Ampliada em {diff_dias} dias" if diff_dias > 0 else f"⬇️ Reduzida em {abs(diff_dias)} dias"
         diff_html = f'<div style="margin-top:8px;font-weight:700;color:{cor_diff};">{seta}</div>'
-
+ 
     html = f"""<!DOCTYPE html>
 <html lang="pt-BR"><body style="font-family:Arial,sans-serif;max-width:600px;
   margin:0 auto;background:#f4f6fa;padding:24px;">
@@ -119,11 +131,11 @@ def main():
     <div style="padding:28px;">
       <table style="width:100%;border-collapse:collapse;font-size:14px;">
         <tr><td style="padding:10px 0;color:#6b7280;width:160px;">Nº do Processo</td>
-            <td style="padding:10px 0;font-weight:700;">{novo.get('numero_processo','')}</td></tr>
+            <td style="padding:10px 0;font-weight:700;">{novo.get('process_number','')}</td></tr>
         <tr style="background:#f8fafc;"><td style="padding:10px 8px;color:#6b7280;">Município</td>
-            <td style="padding:10px 8px;">{novo.get('municipio','')}</td></tr>
+            <td style="padding:10px 8px;">{municipio_nome}</td></tr>
         <tr><td style="padding:10px 0;color:#6b7280;">Objeto</td>
-            <td style="padding:10px 0;">{novo.get('objeto','')}</td></tr>
+            <td style="padding:10px 0;">{novo.get('object','')}</td></tr>
         <tr style="background:#f8fafc;"><td style="padding:10px 8px;color:#6b7280;">Valor Concedente</td>
             <td style="padding:10px 8px;">{conc}</td></tr>
         <tr><td style="padding:10px 0;color:#6b7280;">Valor Licitado</td>
@@ -153,21 +165,21 @@ def main():
     </div>
   </div>
 </body></html>"""
-
+ 
     ntfy_prioridade = 5 if (diff_dias is not None and diff_dias < 0) else 4
-    ntfy_msg = f"{novo.get('numero_processo')} | {venc_antigo} → {venc_novo} ({dias} dias)"
-
+    ntfy_msg = f"{novo.get('process_number')} | {venc_antigo} → {venc_novo} ({dias} dias)"
+ 
     notificar_todos(
-        assunto_email   = f"✏️ Vigência alterada — Proc. {novo.get('numero_processo')} | Nova data: {venc_novo}",
+        assunto_email   = f"✏️ Vigência alterada — Proc. {novo.get('process_number')} | Nova data: {venc_novo}",
         html_email      = html,
         texto_whatsapp  = wpp,
         texto_telegram  = tg,
-        ntfy_titulo     = f"Vigência alterada: {novo.get('numero_processo')}",
+        ntfy_titulo     = f"Vigência alterada: {novo.get('process_number')}",
         ntfy_mensagem   = ntfy_msg,
         ntfy_prioridade = ntfy_prioridade,
         ntfy_link       = lnk
     )
-
-
+ 
+ 
 if __name__ == "__main__":
     main()
