@@ -46,8 +46,8 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 CREATE OR REPLACE FUNCTION trigger_fn_novo_processo()
 RETURNS trigger AS $$
 BEGIN
-  -- Só notifica se o novo registro tem data_vigencia preenchida
-  IF NEW.data_vigencia IS NOT NULL THEN
+  -- Só notifica se o novo registro tem vigencia_date preenchida
+  IF NEW.vigencia_date IS NOT NULL THEN
     PERFORM chamar_github_actions(
       'novo_processo',
       jsonb_build_object('record', row_to_json(NEW)::jsonb)
@@ -70,8 +70,8 @@ CREATE TRIGGER trg_novo_processo
 CREATE OR REPLACE FUNCTION trigger_fn_vigencia_editada()
 RETURNS trigger AS $$
 BEGIN
-  -- Só notifica se a coluna data_vigencia realmente mudou
-  IF OLD.data_vigencia IS DISTINCT FROM NEW.data_vigencia THEN
+  -- Só notifica se a coluna vigencia_date realmente mudou
+  IF OLD.vigencia_date IS DISTINCT FROM NEW.vigencia_date THEN
     PERFORM chamar_github_actions(
       'vigencia_editada',
       jsonb_build_object(
