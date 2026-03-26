@@ -2,36 +2,43 @@
 relatorio_semanal.py
 Fluxo 1 — Executa toda segunda às 10h (via GitHub Actions cron).
 Busca contratos que vencem em até 45 dias e envia relatório categorizado.
+ 
+Mapeamento de colunas (Supabase):
+  id                    → id
+  process_number        → número do processo
+  municipality_id       → FK para tabela municipalities (id, name)
+  object                → objeto do processo
+  total_concedente_value → valor concedente
+  licitado_value        → valor licitado
+  vigencia_date         → data de vigência
 """
-
+ 
 import os
 import sys
 import requests
 from datetime import datetime, timedelta
-
-# Adiciona o diretório scripts ao path para importar notificacoes.py
+ 
 sys.path.insert(0, os.path.dirname(__file__))
 from notificacoes import (
     fmt_moeda, fmt_data, dias_restantes, link_processo,
-    notificar_todos, SISTEMA_URL
+    notificar_todos, resolver_municipios, SISTEMA_URL
 )
-
+ 
 SUPABASE_URL   = os.environ["SUPABASE_URL"]
 SUPABASE_KEY   = os.environ["SUPABASE_KEY"]
 SUPABASE_TABLE = os.environ.get("SUPABASE_TABLE", "processos")
-
-
+ 
+ 
 # ──────────────────────────────────────────────
 # 1. BUSCA NO SUPABASE
 # ──────────────────────────────────────────────
-
+ 
 def buscar_processos():
-    hoje = datetime.now().date()
+    hoje   = datetime.now().date()
     limite = hoje + timedelta(days=45)
-
+ 
     url = f"{SUPABASE_URL}/rest/v1/{SUPABASE_TABLE}"
     params = {
-        # Adapte os nomes das colunas conforme sua tabela
         "select": "id,process_number,municipality_id,object,total_concedente_value,licitado_value,vigencia_date",
         "vigencia_date": f"gte.{hoje.isoformat()}",
         "order": "vigencia_date.asc"
@@ -41,66 +48,72 @@ def buscar_processos():
         "Authorization": f"Bearer {SUPABASE_KEY}",
         "Content-Type": "application/json"
     }
-
+ 
     resp = requests.get(url, params=params, headers=headers, timeout=30)
     resp.raise_for_status()
-
-    # Filtra apenas os próximos 45 dias (o Supabase não filtra lte em múltiplos params facilmente)
+ 
     processos = resp.json()
-    return [p for p in processos
-            if p.get("data_vigencia") and
-            str(p["data_vigencia"])[:10] <= limite.isoformat()]
-
-
+    # Filtra apenas os próximos 45 dias
+    processos = [
+        p for p in processos
+        if p.get("vigencia_date") and
+        str(p["vigencia_date"])[:10] <= limite.isoformat()
+    ]
+ 
+    # Resolve nomes dos municípios em lote (uma única chamada ao Supabase)
+    return resolver_municipios(processos)
+ 
+ 
 # ──────────────────────────────────────────────
 # 2. CLASSIFICAÇÃO
 # ──────────────────────────────────────────────
-
+ 
 def classificar(processos):
     urgentes, atencao, avisos = [], [], []
-
+ 
     for p in processos:
-        d = dias_restantes(p.get("data_vigencia"))
+        d = dias_restantes(p.get("vigencia_date"))
         if d is None:
             continue
-        p["dias"] = d
-        p["venc_fmt"] = fmt_data(p.get("data_vigencia"))
-        p["val_conc_fmt"] = fmt_moeda(p.get("valor_concedente"))
-        p["val_lic_fmt"]  = fmt_moeda(p.get("valor_licitado"))
-        p["link"] = link_processo(p.get("id") or p.get("numero_processo", ""))
-
+        p["dias"]         = d
+        p["venc_fmt"]     = fmt_data(p.get("vigencia_date"))
+        p["val_conc_fmt"] = fmt_moeda(p.get("total_concedente_value"))
+        p["val_lic_fmt"]  = fmt_moeda(p.get("licitado_value"))
+        p["link"]         = link_processo(p.get("id") or p.get("process_number", ""))
+        # municipio_nome já foi resolvido por resolver_municipios()
+ 
         if d <= 15:
             urgentes.append(p)
         elif d <= 30:
             atencao.append(p)
         elif d <= 45:
             avisos.append(p)
-
+ 
     return urgentes, atencao, avisos
-
-
+ 
+ 
 # ──────────────────────────────────────────────
 # 3. MONTAGEM DAS MENSAGENS
 # ──────────────────────────────────────────────
-
+ 
 def montar_whatsapp(urgentes, atencao, avisos):
     data_hoje = datetime.now().strftime("%A, %d/%m/%Y").capitalize()
     linhas = [f"📋 *RELATÓRIO SEMANAL DE VIGÊNCIAS*\n_{data_hoje}_"]
-
+ 
     def secao(emoji, titulo, lista):
         if not lista:
             return ""
         items = []
         for p in lista:
             items.append(
-                f"📌 *Proc. {p['numero_processo']}* | {p['municipio']}\n"
-                f"   📄 {p['objeto']}\n"
+                f"📌 *Proc. {p['process_number']}* | {p['municipio_nome']}\n"
+                f"   📄 {p['object']}\n"
                 f"   💰 Concedente: {p['val_conc_fmt']} | Licitado: {p['val_lic_fmt']}\n"
                 f"   📅 Vencimento: {p['venc_fmt']} _({p['dias']} dias)_\n"
                 f"   🔗 {p['link']}"
             )
         return f"{emoji} *{titulo}*\n\n" + "\n\n".join(items)
-
+ 
     secoes = [
         secao("🔴", "URGENTE — Vencem em até 15 dias", urgentes),
         secao("🟡", "ATENÇÃO — Vencem entre 16 e 30 dias", atencao),
@@ -108,26 +121,26 @@ def montar_whatsapp(urgentes, atencao, avisos):
     ]
     linhas += [s for s in secoes if s]
     return "\n\n━━━━━━━━━━━━━━━━━━\n\n".join(linhas)
-
-
+ 
+ 
 def montar_telegram(urgentes, atencao, avisos):
     data_hoje = datetime.now().strftime("%A, %d/%m/%Y").capitalize()
     linhas = [f"📋 <b>RELATÓRIO SEMANAL DE VIGÊNCIAS</b>\n<i>{data_hoje}</i>"]
-
+ 
     def secao(emoji, titulo, lista):
         if not lista:
             return ""
         items = []
         for p in lista:
             items.append(
-                f"📌 <b>Proc. {p['numero_processo']}</b> | {p['municipio']}\n"
-                f"   📄 {p['objeto']}\n"
+                f"📌 <b>Proc. {p['process_number']}</b> | {p['municipio_nome']}\n"
+                f"   📄 {p['object']}\n"
                 f"   💰 Concedente: {p['val_conc_fmt']} | Licitado: {p['val_lic_fmt']}\n"
                 f"   📅 Vencimento: {p['venc_fmt']} <i>({p['dias']} dias)</i>\n"
                 f"   🔗 <a href=\"{p['link']}\">Acessar processo</a>"
             )
         return f"{emoji} <b>{titulo}</b>\n\n" + "\n\n".join(items)
-
+ 
     secoes = [
         secao("🔴", "URGENTE — Vencem em até 15 dias", urgentes),
         secao("🟡", "ATENÇÃO — Vencem entre 16 e 30 dias", atencao),
@@ -135,11 +148,11 @@ def montar_telegram(urgentes, atencao, avisos):
     ]
     linhas += [s for s in secoes if s]
     return "\n\n─────────────────\n\n".join(linhas)
-
-
+ 
+ 
 def montar_html_email(urgentes, atencao, avisos):
     data_hoje = datetime.now().strftime("%A, %d de %B de %Y").capitalize()
-
+ 
     def tabela(lista, cor_header, cor_texto, titulo):
         if not lista:
             return ""
@@ -147,9 +160,9 @@ def montar_html_email(urgentes, atencao, avisos):
         for p in lista:
             linhas_html += f"""
             <tr>
-              <td style="padding:10px 12px;border-bottom:1px solid #f0f0f0;">{p['numero_processo']}</td>
-              <td style="padding:10px 12px;border-bottom:1px solid #f0f0f0;">{p['municipio']}</td>
-              <td style="padding:10px 12px;border-bottom:1px solid #f0f0f0;">{p['objeto']}</td>
+              <td style="padding:10px 12px;border-bottom:1px solid #f0f0f0;">{p['process_number']}</td>
+              <td style="padding:10px 12px;border-bottom:1px solid #f0f0f0;">{p['municipio_nome']}</td>
+              <td style="padding:10px 12px;border-bottom:1px solid #f0f0f0;">{p['object']}</td>
               <td style="padding:10px 12px;border-bottom:1px solid #f0f0f0;">{p['val_conc_fmt']}</td>
               <td style="padding:10px 12px;border-bottom:1px solid #f0f0f0;">{p['val_lic_fmt']}</td>
               <td style="padding:10px 12px;border-bottom:1px solid #f0f0f0;">{p['venc_fmt']}</td>
@@ -158,7 +171,7 @@ def montar_html_email(urgentes, atencao, avisos):
                 <a href="{p['link']}" style="color:#4361ee;font-weight:600;">Acessar</a>
               </td>
             </tr>"""
-
+ 
         return f"""
         <div style="margin-bottom:28px;">
           <div style="background:{cor_header};color:{cor_texto};padding:12px 20px;
@@ -188,9 +201,9 @@ def montar_html_email(urgentes, atencao, avisos):
             <tbody>{linhas_html}</tbody>
           </table>
         </div>"""
-
+ 
     gerado_em = datetime.now().strftime("%d/%m/%Y às %H:%M")
-
+ 
     return f"""<!DOCTYPE html>
 <html lang="pt-BR"><body style="font-family:Arial,sans-serif;max-width:960px;
   margin:0 auto;background:#f4f6fa;padding:24px;">
@@ -210,37 +223,37 @@ def montar_html_email(urgentes, atencao, avisos):
     </div>
   </div>
 </body></html>"""
-
-
+ 
+ 
 # ──────────────────────────────────────────────
 # 4. EXECUÇÃO PRINCIPAL
 # ──────────────────────────────────────────────
-
+ 
 def main():
     print("🔍 Buscando processos no Supabase...")
     processos = buscar_processos()
     print(f"   {len(processos)} processo(s) com vencimento nos próximos 45 dias.")
-
+ 
     urgentes, atencao, avisos = classificar(processos)
     total = len(urgentes) + len(atencao) + len(avisos)
-
+ 
     if total == 0:
         print("✅ Nenhum processo vence nos próximos 45 dias. Nenhuma notificação enviada.")
         return
-
+ 
     print(f"   🔴 {len(urgentes)} URGENTE(s) · 🟡 {len(atencao)} ATENÇÃO · 🔵 {len(avisos)} AVISO(s)")
-
+ 
     assunto = (
         f"📋 Relatório de Vigências — "
         f"{len(urgentes)} URGENTE(s), {len(atencao)} ATENÇÃO, {len(avisos)} AVISO(s)"
     )
-
+ 
     ntfy_partes = []
     if urgentes: ntfy_partes.append(f"🔴 {len(urgentes)} URGENTE(s)")
     if atencao:  ntfy_partes.append(f"🟡 {len(atencao)} ATENÇÃO")
     if avisos:   ntfy_partes.append(f"🔵 {len(avisos)} AVISO(s)")
     ntfy_prioridade = 5 if urgentes else 4 if atencao else 3
-
+ 
     notificar_todos(
         assunto_email    = assunto,
         html_email       = montar_html_email(urgentes, atencao, avisos),
@@ -251,7 +264,7 @@ def main():
         ntfy_prioridade  = ntfy_prioridade,
         ntfy_link        = SISTEMA_URL
     )
-
-
+ 
+ 
 if __name__ == "__main__":
     main()
