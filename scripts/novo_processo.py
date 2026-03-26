@@ -20,7 +20,7 @@ from datetime import datetime
  
 sys.path.insert(0, os.path.dirname(__file__))
 from notificacoes import (
-    fmt_moeda, fmt_data, dias_restantes, link_processo,
+    fmt_moeda, fmt_data, dias_restantes, link_processo, link_google_calendar,
     notificar_todos, buscar_nome_municipio, SISTEMA_URL
 )
  
@@ -51,6 +51,17 @@ def main():
     conc  = fmt_moeda(p.get("total_concedente_value"))
     lic   = fmt_moeda(p.get("licitado_value"))
     lnk   = link_processo(p.get("id") or p.get("process_number", ""))
+    lnk_calendar = link_google_calendar(
+        titulo=f"Vigência processo {p.get('process_number', '')}",
+        data_iso=p.get("vigencia_date"),
+        descricao=(
+            f"Processo: {p.get('process_number', '')}\n"
+            f"Município: {municipio_nome}\n"
+            f"Objeto: {p.get('object', '')}\n"
+            f"Link: {lnk}"
+        ),
+        local=municipio_nome
+    )
     agora = datetime.now().strftime("%d/%m/%Y às %H:%M")
  
     # ─── WHATSAPP ──────────────────────────────────────────
@@ -62,7 +73,8 @@ def main():
         f"💰 *Valor concedente:* {conc}\n"
         f"💰 *Valor licitado:* {lic}\n"
         f"📅 *Vigência até:* {venc} _({dias} dias restantes)_\n"
-        f"🔗 {lnk}\n\n"
+        f"🔗 {lnk}\n"
+        f"🗓️ Google Calendar: {lnk_calendar}\n\n"
         f"_Cadastrado em {agora}_"
     )
  
@@ -75,7 +87,8 @@ def main():
         f"💰 <b>Valor concedente:</b> {conc}\n"
         f"💰 <b>Valor licitado:</b> {lic}\n"
         f"📅 <b>Vigência até:</b> {venc} <i>({dias} dias restantes)</i>\n"
-        f"🔗 <a href=\"{lnk}\">Acessar processo</a>\n\n"
+        f"🔗 <a href=\"{lnk}\">Acessar processo</a>\n"
+        f"🗓️ <a href=\"{lnk_calendar}\">Adicionar no Google Calendar</a>\n\n"
         f"<i>Cadastrado em {agora}</i>"
     )
  
@@ -109,6 +122,12 @@ def main():
         <a href="{lnk}" style="background:#4361ee;color:white;padding:12px 28px;
            border-radius:8px;text-decoration:none;font-weight:700;font-size:14px;">
           🔗 Acessar Processo
+        </a>
+      </div>
+      <div style="margin-top:12px;text-align:center;">
+        <a href="{lnk_calendar}" style="background:#166534;color:white;padding:12px 28px;
+           border-radius:8px;text-decoration:none;font-weight:700;font-size:14px;display:inline-block;">
+          🗓️ Adicionar no Google Calendar
         </a>
       </div>
     </div>

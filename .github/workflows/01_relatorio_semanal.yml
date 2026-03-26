@@ -5,9 +5,13 @@ on:
     # Toda segunda-feira às 10h (horário de Brasília = UTC-3, então 13h UTC)
     - cron: "0 13 * * 1"
   workflow_dispatch: # permite rodar manualmente pelo GitHub
+  repository_dispatch:
+    types:
+      - relatorio_manual
 
 jobs:
   relatorio:
+    if: github.event_name != 'repository_dispatch' || github.event.action == 'relatorio_manual'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout do repositório
@@ -29,9 +33,14 @@ jobs:
           GMAIL_USER: ${{ secrets.GMAIL_USER }}
           GMAIL_PASS: ${{ secrets.GMAIL_PASS }}
           EMAILS_DESTINO: ${{ secrets.EMAILS_DESTINO }}
+          EMAIL_DESTINO: ${{ secrets.EMAIL_DESTINO }}
+          NOTIFY_EMAIL: ${{ secrets.NOTIFY_EMAIL }}
           CALLMEBOT_NUMEROS: ${{ secrets.CALLMEBOT_NUMEROS }}
+          WHATSAPP_PHONE: ${{ secrets.WHATSAPP_PHONE }}
+          CALLMEBOT_API_KEY: ${{ secrets.CALLMEBOT_API_KEY }}
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHATS: ${{ secrets.TELEGRAM_CHATS }}
           NTFY_TOPICO: ${{ secrets.NTFY_TOPICO }}
           SISTEMA_URL: ${{ secrets.SISTEMA_URL }}
+          NOTIFICACAO_ORIGEM: ${{ github.event.action == 'relatorio_manual' && 'manual' || 'semanal' }}
         run: python scripts/relatorio_semanal.py
