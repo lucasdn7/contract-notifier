@@ -2,20 +2,29 @@
 novo_processo.py
 Fluxo 2 — Disparado via repository_dispatch quando o Supabase
 detecta um INSERT na tabela de processos (trigger SQL → GitHub API).
+ 
+Mapeamento de colunas (Supabase):
+  id                    → id
+  process_number        → número do processo
+  municipality_id       → FK para tabela municipalities (id, name)
+  object                → objeto do processo
+  total_concedente_value → valor concedente
+  licitado_value        → valor licitado
+  vigencia_date         → data de vigência
 """
-
+ 
 import os
 import sys
 import json
 from datetime import datetime
-
+ 
 sys.path.insert(0, os.path.dirname(__file__))
 from notificacoes import (
     fmt_moeda, fmt_data, dias_restantes, link_processo,
-    notificar_todos, SISTEMA_URL
+    notificar_todos, buscar_nome_municipio, SISTEMA_URL
 )
-
-
+ 
+ 
 def main():
     # O payload enviado pelo Supabase chega como variável de ambiente
     payload_raw = os.environ.get("EVENT_PAYLOAD", "{}")
@@ -24,49 +33,52 @@ def main():
     except json.JSONDecodeError:
         print(f"❌ Payload inválido: {payload_raw[:200]}")
         sys.exit(1)
-
+ 
     # O Supabase envia o registro em payload.record
     p = payload.get("record") or payload
-    print(f"📥 Payload recebido: Proc. {p.get('numero_processo')} | {p.get('municipio')}")
-
+    print(f"📥 Payload recebido: Proc. {p.get('process_number')} | municipality_id: {p.get('municipality_id')}")
+ 
     # Se não tem data de vigência, não notifica
-    if not p.get("data_vigencia"):
+    if not p.get("vigencia_date"):
         print("ℹ️  Processo sem data de vigência — nenhuma notificação enviada.")
         return
-
-    dias = dias_restantes(p["data_vigencia"])
-    venc = fmt_data(p["data_vigencia"])
-    conc = fmt_moeda(p.get("valor_concedente"))
-    lic  = fmt_moeda(p.get("valor_licitado"))
-    lnk  = link_processo(p.get("id") or p.get("numero_processo", ""))
+ 
+    # Resolve o nome do município via FK
+    municipio_nome = buscar_nome_municipio(p.get("municipality_id"))
+ 
+    dias  = dias_restantes(p["vigencia_date"])
+    venc  = fmt_data(p["vigencia_date"])
+    conc  = fmt_moeda(p.get("total_concedente_value"))
+    lic   = fmt_moeda(p.get("licitado_value"))
+    lnk   = link_processo(p.get("id") or p.get("process_number", ""))
     agora = datetime.now().strftime("%d/%m/%Y às %H:%M")
-
+ 
     # ─── WHATSAPP ──────────────────────────────────────────
     wpp = (
         f"✅ *NOVO PROCESSO CADASTRADO*\n\n"
-        f"📌 *Processo:* {p['numero_processo']}\n"
-        f"🏙️ *Município:* {p['municipio']}\n"
-        f"📄 *Objeto:* {p['objeto']}\n"
+        f"📌 *Processo:* {p['process_number']}\n"
+        f"🏙️ *Município:* {municipio_nome}\n"
+        f"📄 *Objeto:* {p['object']}\n"
         f"💰 *Valor concedente:* {conc}\n"
         f"💰 *Valor licitado:* {lic}\n"
         f"📅 *Vigência até:* {venc} _({dias} dias restantes)_\n"
         f"🔗 {lnk}\n\n"
         f"_Cadastrado em {agora}_"
     )
-
+ 
     # ─── TELEGRAM ──────────────────────────────────────────
     tg = (
         f"✅ <b>NOVO PROCESSO CADASTRADO</b>\n\n"
-        f"📌 <b>Processo:</b> {p['numero_processo']}\n"
-        f"🏙️ <b>Município:</b> {p['municipio']}\n"
-        f"📄 <b>Objeto:</b> {p['objeto']}\n"
+        f"📌 <b>Processo:</b> {p['process_number']}\n"
+        f"🏙️ <b>Município:</b> {municipio_nome}\n"
+        f"📄 <b>Objeto:</b> {p['object']}\n"
         f"💰 <b>Valor concedente:</b> {conc}\n"
         f"💰 <b>Valor licitado:</b> {lic}\n"
         f"📅 <b>Vigência até:</b> {venc} <i>({dias} dias restantes)</i>\n"
         f"🔗 <a href=\"{lnk}\">Acessar processo</a>\n\n"
         f"<i>Cadastrado em {agora}</i>"
     )
-
+ 
     # ─── E-MAIL HTML ───────────────────────────────────────
     html = f"""<!DOCTYPE html>
 <html lang="pt-BR"><body style="font-family:Arial,sans-serif;max-width:600px;
@@ -80,11 +92,11 @@ def main():
     <div style="padding:28px;">
       <table style="width:100%;border-collapse:collapse;font-size:14px;">
         <tr><td style="padding:10px 0;color:#6b7280;width:160px;">Nº do Processo</td>
-            <td style="padding:10px 0;font-weight:700;">{p.get('numero_processo','')}</td></tr>
+            <td style="padding:10px 0;font-weight:700;">{p.get('process_number','')}</td></tr>
         <tr style="background:#f8fafc;"><td style="padding:10px 8px;color:#6b7280;">Município</td>
-            <td style="padding:10px 8px;">{p.get('municipio','')}</td></tr>
+            <td style="padding:10px 8px;">{municipio_nome}</td></tr>
         <tr><td style="padding:10px 0;color:#6b7280;">Objeto</td>
-            <td style="padding:10px 0;">{p.get('objeto','')}</td></tr>
+            <td style="padding:10px 0;">{p.get('object','')}</td></tr>
         <tr style="background:#f8fafc;"><td style="padding:10px 8px;color:#6b7280;">Valor Concedente</td>
             <td style="padding:10px 8px;">{conc}</td></tr>
         <tr><td style="padding:10px 0;color:#6b7280;">Valor Licitado</td>
@@ -102,18 +114,18 @@ def main():
     </div>
   </div>
 </body></html>"""
-
+ 
     notificar_todos(
-        assunto_email   = f"✅ Novo Processo — {p.get('numero_processo')} | {p.get('municipio')} | Vigência: {venc}",
+        assunto_email   = f"✅ Novo Processo — {p.get('process_number')} | {municipio_nome} | Vigência: {venc}",
         html_email      = html,
         texto_whatsapp  = wpp,
         texto_telegram  = tg,
-        ntfy_titulo     = f"Novo processo: {p.get('numero_processo')}",
-        ntfy_mensagem   = f"{p.get('municipio')} | Vigência: {venc} ({dias} dias)",
+        ntfy_titulo     = f"Novo processo: {p.get('process_number')}",
+        ntfy_mensagem   = f"{municipio_nome} | Vigência: {venc} ({dias} dias)",
         ntfy_prioridade = 4,
         ntfy_link       = lnk
     )
-
-
+ 
+ 
 if __name__ == "__main__":
     main()
