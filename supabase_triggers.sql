@@ -7,22 +7,14 @@
 --   SEU_USUARIO_GITHUB  → lucasdn7
 --   SEU_REPOSITORIO     → contract-notifier
 --   SEU_TOKEN_GITHUB    → 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
---   processos           → processes
---
--- Como gerar o Personal Access Token (PAT):
---   1. GitHub → Settings → Developer Settings → Personal Access Tokens → Tokens (classic)
---   2. Clique "Generate new token"
---   3. Marque o escopo: "repo" (Full control of private repositories)
---   4. Copie o token gerado (começa com ghp_...)
+--   processes           → processes (já está correto)
 -- ================================================================
 
 
 -- ─────────────────────────────────────────────────────────────
 -- EXTENSÃO pg_net (necessária para HTTP requests)
--- Ative em: Supabase → Database → Extensions → pg_net
 -- ─────────────────────────────────────────────────────────────
--- Se não estiver ativa, rode:
--- CREATE EXTENSION IF NOT EXISTS pg_net;
+CREATE EXTENSION IF NOT EXISTS pg_net;
 
 
 -- ─────────────────────────────────────────────────────────────
@@ -65,9 +57,9 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-DROP TRIGGER IF EXISTS trg_novo_processo ON processos;
+DROP TRIGGER IF EXISTS trg_novo_processo ON processes;
 CREATE TRIGGER trg_novo_processo
-  AFTER INSERT ON processos
+  AFTER INSERT ON processes
   FOR EACH ROW
   EXECUTE FUNCTION trigger_fn_novo_processo();
 
@@ -92,9 +84,9 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-DROP TRIGGER IF EXISTS trg_vigencia_editada ON processos;
+DROP TRIGGER IF EXISTS trg_vigencia_editada ON processes;
 CREATE TRIGGER trg_vigencia_editada
-  AFTER UPDATE ON processos
+  AFTER UPDATE ON processes
   FOR EACH ROW
   EXECUTE FUNCTION trigger_fn_vigencia_editada();
 
@@ -104,4 +96,4 @@ CREATE TRIGGER trg_vigencia_editada
 -- ─────────────────────────────────────────────────────────────
 SELECT trigger_name, event_manipulation, action_timing
 FROM information_schema.triggers
-WHERE event_object_table = 'processos';
+WHERE event_object_table = 'processes';
