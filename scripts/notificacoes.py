@@ -2,14 +2,14 @@
 notificacoes.py
 Módulo compartilhado — funções de envio para todos os canais.
 WhatsApp via CallMeBot (gratuito, sem servidor).
-
+ 
 Como funciona o CallMeBot para múltiplos números:
   - Cada número precisa se registrar UMA VEZ no CallMeBot (processo de 1 minuto)
   - Cada número recebe sua própria API key
   - No secret CALLMEBOT_NUMEROS você coloca: NUMERO1:APIKEY1,NUMERO2:APIKEY2,...
   - Não há custo, não precisa de servidor, funciona com qualquer número WhatsApp
 """
-
+ 
 import os
 import smtplib
 import requests
@@ -17,16 +17,16 @@ from urllib.parse import quote
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from datetime import datetime
-
-
+ 
+ 
 # ──────────────────────────────────────────────
 # CONFIGURAÇÕES (lidas das variáveis de ambiente / GitHub Secrets)
 # ──────────────────────────────────────────────
-
+ 
 GMAIL_USER     = os.environ.get("GMAIL_USER", "")
 GMAIL_PASS     = os.environ.get("GMAIL_PASS", "")
 EMAILS_DESTINO = [e.strip() for e in os.environ.get("EMAILS_DESTINO", "").split(",") if e.strip()]
-
+ 
 # CallMeBot — formato do secret CALLMEBOT_NUMEROS:
 #   "5548999990000:apikey1,5511988880000:apikey2,5521977770000:apikey3"
 #   Número com DDI (sem + ou espaços) : API key separados por dois pontos
@@ -41,26 +41,29 @@ for entry in _callmebot_raw.split(","):
         apikey = partes[1].strip()
         if numero and apikey:
             CALLMEBOT_DESTINATARIOS.append({"numero": numero, "apikey": apikey})
-
+ 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "")
 TELEGRAM_CHATS = [c.strip() for c in os.environ.get("TELEGRAM_CHATS", "").split(",") if c.strip()]
-
+ 
 NTFY_TOPICO = os.environ.get("NTFY_TOPICO", "")
 SISTEMA_URL = os.environ.get("SISTEMA_URL", "").rstrip("/")
-
-
+ 
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
+ 
+ 
 # ──────────────────────────────────────────────
 # HELPERS
 # ──────────────────────────────────────────────
-
+ 
 def fmt_moeda(valor):
     """Formata número como moeda BRL."""
     try:
         return f"R$ {float(valor):_.2f}".replace(".", ",").replace("_", ".")
     except (ValueError, TypeError):
         return "R$ 0,00"
-
-
+ 
+ 
 def fmt_data(data_iso):
     """Converte YYYY-MM-DD para DD/MM/YYYY."""
     if not data_iso:
@@ -69,8 +72,8 @@ def fmt_data(data_iso):
         return datetime.strptime(str(data_iso)[:10], "%Y-%m-%d").strftime("%d/%m/%Y")
     except ValueError:
         return str(data_iso)
-
-
+ 
+ 
 def dias_restantes(data_iso):
     """Calcula dias até a data de vigência."""
     if not data_iso:
@@ -81,16 +84,89 @@ def dias_restantes(data_iso):
         return (venc - hoje).days
     except ValueError:
         return None
-
-
+ 
+ 
 def link_processo(processo_id):
     return f"{SISTEMA_URL}/{processo_id}" if SISTEMA_URL else "#"
-
-
+ 
+ 
+def buscar_nome_municipio(municipality_id):
+    """
+    Busca o nome do município na tabela 'municipalities' pelo ID.
+    Retorna o nome ou uma string de fallback se não encontrado.
+    """
+    if not municipality_id or not SUPABASE_URL or not SUPABASE_KEY:
+        return str(municipality_id) if municipality_id else "Não informado"
+ 
+    try:
+        url = f"{SUPABASE_URL}/rest/v1/municipalities"
+        params = {
+            "select": "id,name",
+            "id": f"eq.{municipality_id}"
+        }
+        headers = {
+            "apikey": SUPABASE_KEY,
+            "Authorization": f"Bearer {SUPABASE_KEY}",
+            "Content-Type": "application/json"
+        }
+        resp = requests.get(url, params=params, headers=headers, timeout=10)
+        resp.raise_for_status()
+        dados = resp.json()
+        if dados:
+            return dados[0].get("name", str(municipality_id))
+    except Exception as e:
+        print(f"[MUNICIPIO] ⚠️  Não foi possível buscar nome do município {municipality_id}: {e}")
+ 
+    return str(municipality_id)
+ 
+ 
+def resolver_municipios(processos: list) -> list:
+    """
+    Resolve os nomes de todos os municípios de uma lista de processos
+    em uma única chamada ao Supabase (busca por IDs únicos).
+    Adiciona a chave 'municipio_nome' em cada processo.
+    """
+    ids_unicos = list({
+        p["municipality_id"] for p in processos
+        if p.get("municipality_id") is not None
+    })
+ 
+    if not ids_unicos or not SUPABASE_URL or not SUPABASE_KEY:
+        for p in processos:
+            p["municipio_nome"] = str(p.get("municipality_id", "Não informado"))
+        return processos
+ 
+    try:
+        # Supabase aceita filtro "in" com a sintaxe: in.(id1,id2,id3)
+        ids_str = ",".join(str(i) for i in ids_unicos)
+        url = f"{SUPABASE_URL}/rest/v1/municipalities"
+        params = {
+            "select": "id,name",
+            "id": f"in.({ids_str})"
+        }
+        headers = {
+            "apikey": SUPABASE_KEY,
+            "Authorization": f"Bearer {SUPABASE_KEY}",
+            "Content-Type": "application/json"
+        }
+        resp = requests.get(url, params=params, headers=headers, timeout=15)
+        resp.raise_for_status()
+        mapa = {m["id"]: m["name"] for m in resp.json()}
+    except Exception as e:
+        print(f"[MUNICIPIOS] ⚠️  Erro ao buscar municípios em lote: {e}")
+        mapa = {}
+ 
+    for p in processos:
+        mid = p.get("municipality_id")
+        p["municipio_nome"] = mapa.get(mid, str(mid) if mid else "Não informado")
+ 
+    return processos
+ 
+ 
 # ──────────────────────────────────────────────
 # ENVIO — E-MAIL (Gmail SMTP)
 # ──────────────────────────────────────────────
-
+ 
 def enviar_email(assunto: str, html: str):
     """
     Envia e-mail HTML para todos os destinatários configurados.
@@ -99,28 +175,28 @@ def enviar_email(assunto: str, html: str):
     if not GMAIL_USER or not GMAIL_PASS or not EMAILS_DESTINO:
         print("[EMAIL] ⚠️  Configuração de e-mail incompleta — pulando.")
         return
-
+ 
     try:
         msg = MIMEMultipart("alternative")
         msg["Subject"] = assunto
         msg["From"]    = f"Sistema de Vigências <{GMAIL_USER}>"
         msg["To"]      = ", ".join(EMAILS_DESTINO)
-
+ 
         msg.attach(MIMEText(html, "html", "utf-8"))
-
+ 
         with smtplib.SMTP_SSL("smtp.gmail.com", 465) as servidor:
             servidor.login(GMAIL_USER, GMAIL_PASS)
             servidor.sendmail(GMAIL_USER, EMAILS_DESTINO, msg.as_bytes())
-
+ 
         print(f"[EMAIL] ✅ Enviado para {len(EMAILS_DESTINO)} destinatário(s).")
     except Exception as e:
         print(f"[EMAIL] ❌ Erro: {e}")
-
-
+ 
+ 
 # ──────────────────────────────────────────────
 # ENVIO — WHATSAPP (CallMeBot — gratuito, sem servidor)
 # ──────────────────────────────────────────────
-
+ 
 def _dividir_mensagem(mensagem: str, limite: int = 900) -> list:
     """
     Divide mensagem longa em partes respeitando quebras de linha.
@@ -128,87 +204,82 @@ def _dividir_mensagem(mensagem: str, limite: int = 900) -> list:
     """
     if len(mensagem) <= limite:
         return [mensagem]
-
+ 
     partes = []
     linhas = mensagem.split("\n")
     parte_atual = ""
-
+ 
     for linha in linhas:
-        # +1 para contar o \n que será adicionado
         if len(parte_atual) + len(linha) + 1 <= limite:
             parte_atual += linha + "\n"
         else:
             if parte_atual:
                 partes.append(parte_atual.strip())
             parte_atual = linha + "\n"
-
+ 
     if parte_atual.strip():
         partes.append(parte_atual.strip())
-
+ 
     return partes
-
-
+ 
+ 
 def enviar_whatsapp(mensagem: str):
     """
     Envia mensagem WhatsApp para todos os números via CallMeBot.
-
+ 
     Secret necessário no GitHub: CALLMEBOT_NUMEROS
     Formato: 5548999990000:apikey1,5511988880000:apikey2
-
+ 
     Mensagens longas (relatório semanal) são divididas automaticamente
     em partes e enviadas em sequência com 2 segundos de intervalo.
     """
     if not CALLMEBOT_DESTINATARIOS:
         print("[WHATSAPP] ⚠️  Nenhum destinatário CallMeBot configurado — pulando.")
         return
-
+ 
     partes = _dividir_mensagem(mensagem, limite=900)
     total_partes = len(partes)
     sucesso_total = 0
-
+ 
     for dest in CALLMEBOT_DESTINATARIOS:
         numero = dest["numero"]
         apikey = dest["apikey"]
         sucesso_dest = True
-
+ 
         for i, parte in enumerate(partes):
-            # Adiciona indicador de parte apenas quando mensagem foi dividida
             texto_final = f"({i+1}/{total_partes})\n{parte}" if total_partes > 1 else parte
-
-            # URL encoding obrigatório para o CallMeBot
+ 
             msg_encoded = quote(texto_final)
             url = (
                 f"https://api.callmebot.com/whatsapp.php"
                 f"?phone={numero}&text={msg_encoded}&apikey={apikey}"
             )
-
+ 
             try:
                 resp = requests.get(url, timeout=20)
-
-                # CallMeBot retorna HTML com "Message queued" em caso de sucesso
+ 
                 if resp.status_code != 200 or "queued" not in resp.text.lower():
                     print(f"[WHATSAPP] ⚠️  {numero} parte {i+1}/{total_partes}: {resp.text[:150]}")
                     sucesso_dest = False
-
-                # Intervalo entre partes para evitar bloqueio por flood
+ 
                 if total_partes > 1 and i < total_partes - 1:
                     import time
                     time.sleep(2)
-
+ 
             except Exception as e:
                 print(f"[WHATSAPP] ❌ Erro no número {numero}: {e}")
                 sucesso_dest = False
-
+ 
         if sucesso_dest:
             sucesso_total += 1
-
+ 
     print(f"[WHATSAPP] ✅ Enviado para {sucesso_total}/{len(CALLMEBOT_DESTINATARIOS)} número(s).")
-
-
+ 
+ 
 # ──────────────────────────────────────────────
 # ENVIO — TELEGRAM
 # ──────────────────────────────────────────────
-
+ 
 def enviar_telegram(mensagem: str):
     """
     Envia mensagem HTML para todos os chats/grupos configurados.
@@ -217,10 +288,10 @@ def enviar_telegram(mensagem: str):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHATS:
         print("[TELEGRAM] ⚠️  Configuração incompleta — pulando.")
         return
-
+ 
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     sucesso = 0
-
+ 
     for chat_id in TELEGRAM_CHATS:
         try:
             resp = requests.post(url, json={
@@ -235,15 +306,15 @@ def enviar_telegram(mensagem: str):
                 print(f"[TELEGRAM] ⚠️  Chat {chat_id}: {resp.text[:100]}")
         except Exception as e:
             print(f"[TELEGRAM] ❌ Erro no chat {chat_id}: {e}")
-
+ 
     if sucesso:
         print(f"[TELEGRAM] ✅ Enviado para {sucesso}/{len(TELEGRAM_CHATS)} chat(s).")
-
-
+ 
+ 
 # ──────────────────────────────────────────────
 # ENVIO — NTFY (extensão do navegador)
 # ──────────────────────────────────────────────
-
+ 
 def enviar_ntfy(titulo: str, mensagem: str, prioridade: int = 3, link: str = ""):
     """
     Publica notificação no ntfy.sh.
@@ -253,7 +324,7 @@ def enviar_ntfy(titulo: str, mensagem: str, prioridade: int = 3, link: str = "")
     if not NTFY_TOPICO:
         print("[NTFY] ⚠️  Tópico não configurado — pulando.")
         return
-
+ 
     headers = {
         "Title": titulo,
         "Priority": str(prioridade),
@@ -262,7 +333,7 @@ def enviar_ntfy(titulo: str, mensagem: str, prioridade: int = 3, link: str = "")
     }
     if link:
         headers["Click"] = link
-
+ 
     try:
         resp = requests.post(
             f"https://ntfy.sh/{NTFY_TOPICO}",
@@ -276,12 +347,12 @@ def enviar_ntfy(titulo: str, mensagem: str, prioridade: int = 3, link: str = "")
             print(f"[NTFY] ⚠️  Status {resp.status_code}")
     except Exception as e:
         print(f"[NTFY] ❌ Erro: {e}")
-
-
+ 
+ 
 # ──────────────────────────────────────────────
 # FUNÇÃO PRINCIPAL — dispara todos os canais de uma vez
 # ──────────────────────────────────────────────
-
+ 
 def notificar_todos(assunto_email: str, html_email: str,
                     texto_whatsapp: str, texto_telegram: str,
                     ntfy_titulo: str, ntfy_mensagem: str,
