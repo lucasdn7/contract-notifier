@@ -311,7 +311,7 @@ def enviar_email(assunto: str, html: str):
 # ──────────────────────────────────────────────
 # ENVIO — WHATSAPP (CallMeBot — gratuito, sem servidor)
 # ──────────────────────────────────────────────
- 
+
 def _dividir_mensagem(mensagem: str, limite: int = 900) -> list:
     """
     Divide mensagem longa em partes respeitando quebras de linha.
@@ -319,11 +319,11 @@ def _dividir_mensagem(mensagem: str, limite: int = 900) -> list:
     """
     if len(mensagem) <= limite:
         return [mensagem]
- 
+
     partes = []
     linhas = mensagem.split("\n")
     parte_atual = ""
- 
+
     for linha in linhas:
         if len(parte_atual) + len(linha) + 1 <= limite:
             parte_atual += linha + "\n"
@@ -331,10 +331,10 @@ def _dividir_mensagem(mensagem: str, limite: int = 900) -> list:
             if parte_atual:
                 partes.append(parte_atual.strip())
             parte_atual = linha + "\n"
- 
+
     if parte_atual.strip():
         partes.append(parte_atual.strip())
- 
+
     return partes
  
  
