@@ -269,6 +269,33 @@ def enviar_email(assunto: str, html: str):
                 },
                 timeout=30,
             )
+            if resp.status_code < 300:
+                print(f"[EMAIL] ✅ Enviado via Resend para {len(EMAILS_DESTINO)} destinatário(s).")
+                return
+            print(f"[EMAIL] ⚠️ Resend retornou {resp.status_code}: {resp.text[:200]}. Tentando fallback via Gmail...")
+        except Exception as e:
+            print(f"[EMAIL] ⚠️ Erro no Resend: {e}. Tentando fallback via Gmail...")
+
+    if GMAIL_USER and GMAIL_PASS:
+        try:
+            msg = MIMEMultipart("alternative")
+            msg["Subject"] = assunto
+            msg["From"]    = f"Sistema de Vigências <{GMAIL_USER}>"
+            msg["To"]      = ", ".join(EMAILS_DESTINO)
+
+            msg.attach(MIMEText(html, "html", "utf-8"))
+
+            with smtplib.SMTP_SSL("smtp.gmail.com", 465) as servidor:
+                servidor.login(GMAIL_USER, GMAIL_PASS)
+                servidor.sendmail(GMAIL_USER, EMAILS_DESTINO, msg.as_bytes())
+
+            print(f"[EMAIL] ✅ Enviado via Gmail para {len(EMAILS_DESTINO)} destinatário(s).")
+            return
+        except Exception as e:
+            print(f"[EMAIL] ❌ Falha no Gmail SMTP: {e}")
+            return
+
+    print("[EMAIL] ⚠️ Configuração de e-mail incompleta: defina RESEND_API_KEY (preferencial) ou GMAIL_USER/GMAIL_PASS.")
             if resp.status_code >= 300:
                 print(f"[EMAIL] ❌ Resend retornou {resp.status_code}: {resp.text[:200]}")
                 return
