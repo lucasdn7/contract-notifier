@@ -8,9 +8,18 @@ const supabase = createClient(
 
 const resend = new Resend(process.env.RESEND_API_KEY);
 
+function parseEmailRecipients(rawValue) {
+  return String(rawValue || '')
+    .split(/[,\n;]+/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .filter((item) => item.includes('@'));
+}
+
 function getEmailRecipients() {
-  const raw = process.env.NOTIFY_EMAIL || process.env.EMAILS_DESTINO || '';
-  return raw.split(',').map((item) => item.trim()).filter(Boolean);
+  const fromNotify = parseEmailRecipients(process.env.NOTIFY_EMAIL);
+  const fromList = parseEmailRecipients(process.env.EMAILS_DESTINO);
+  return [...new Set([...fromNotify, ...fromList])];
 }
 
 function getWhatsAppRecipients() {
@@ -389,7 +398,7 @@ async function sendEmail(groups) {
     html: buildEmailHtml(groups),
   });
   if (error) console.error('Erro ao enviar e-mail:', error);
-  else console.log(`✅ E-mail enviado — ${total} contrato(s)`);
+  else console.log(`✅ E-mail enviado para ${recipients.length} destinatário(s) — ${total} contrato(s)`);
 }
 
 async function sendWhatsApp(groups) {
