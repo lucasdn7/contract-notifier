@@ -19,7 +19,7 @@ import requests
 from datetime import datetime, timedelta
  
 sys.path.insert(0, os.path.dirname(__file__))
-from notificacoes import (
+from notificacoes_v2 import (
     fmt_moeda, fmt_data, dias_restantes, link_processo, link_google_calendar,
     notificar_todos, resolver_municipios, SISTEMA_URL
 )
@@ -175,16 +175,14 @@ def montar_html_email(urgentes, atencao, avisos):
             <tr>
               <td style="padding:10px 12px;border-bottom:1px solid #f0f0f0;">{p['process_number']}</td>
               <td style="padding:10px 12px;border-bottom:1px solid #f0f0f0;">{p['municipio_nome']}</td>
-              <td style="padding:10px 12px;border-bottom:1px solid #f0f0f0;">{p['object']}</td>
+              <td style="padding:10px 12px;border-bottom:1px solid #f0f0f0;line-height:1.45;">{p['object']}</td>
               <td style="padding:10px 12px;border-bottom:1px solid #f0f0f0;">{p['val_conc_fmt']}</td>
               <td style="padding:10px 12px;border-bottom:1px solid #f0f0f0;">{p['val_lic_fmt']}</td>
               <td style="padding:10px 12px;border-bottom:1px solid #f0f0f0;">{p['venc_fmt']}</td>
               <td style="padding:10px 12px;border-bottom:1px solid #f0f0f0;font-weight:700;color:{cor_texto};">{p['dias']} dias</td>
-              <td style="padding:10px 12px;border-bottom:1px solid #f0f0f0;">
-                <a href="{p['link']}" style="color:#4361ee;font-weight:600;">Acessar</a>
-              </td>
-              <td style="padding:10px 12px;border-bottom:1px solid #f0f0f0;">
-                <a href="{p['calendar_link']}" style="color:#166534;font-weight:600;">Adicionar</a>
+              <td style="padding:10px 12px;border-bottom:1px solid #f0f0f0;text-align:center;">
+                <a href="{p['calendar_link']}" style="display:inline-block;background:#166534;color:#ffffff;font-weight:700;
+                   padding:8px 12px;border-radius:6px;text-decoration:none;font-size:12px;white-space:nowrap;">Adicionar no Calendar</a>
               </td>
             </tr>"""
  
@@ -210,10 +208,8 @@ def montar_html_email(urgentes, atencao, avisos):
                            color:#6b7280;font-size:11px;text-transform:uppercase;">Vencimento</th>
                 <th style="padding:9px 12px;text-align:left;border-bottom:2px solid #e5e7eb;
                            color:#6b7280;font-size:11px;text-transform:uppercase;">Restam</th>
-                <th style="padding:9px 12px;text-align:left;border-bottom:2px solid #e5e7eb;
-                           color:#6b7280;font-size:11px;text-transform:uppercase;">Link</th>
-                <th style="padding:9px 12px;text-align:left;border-bottom:2px solid #e5e7eb;
-                           color:#6b7280;font-size:11px;text-transform:uppercase;">Calendar</th>
+                <th style="padding:9px 12px;text-align:center;border-bottom:2px solid #e5e7eb;
+                           color:#166534;font-size:11px;text-transform:uppercase;">Google Calendar</th>
               </tr>
             </thead>
             <tbody>{linhas_html}</tbody>
