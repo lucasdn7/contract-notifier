@@ -227,6 +227,14 @@ function buildEmailHtml({ expired, urgent, warning, notice }) {
     </div>
   `).join('');
 
+  const emptyState = total === 0
+    ? `
+      <div style="margin-bottom:25px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:18px;color:#334155">
+        ✅ Nenhum contrato vencido ou próximo do vencimento no período monitorado (últimos 30 dias + próximos 45 dias).
+      </div>
+    `
+    : '';
+
   return `
     <div style="font-family:Arial,sans-serif;max-width:980px;margin:auto;padding:20px;background:#f5f5f5">
       <div style="background:#fff;border-radius:10px;padding:30px;box-shadow:0 2px 8px rgba(0,0,0,0.1)">
@@ -236,6 +244,7 @@ function buildEmailHtml({ expired, urgent, warning, notice }) {
         <p style="color:#666;margin-bottom:25px">
           Foram encontrados <strong>${total} contrato(s)</strong> vencidos e/ou próximos ao vencimento em ${new Date().toLocaleDateString('pt-BR')}.
         </p>
+        ${emptyState}
         ${sections}
         <p style="color:#aaa;font-size:11px;margin-top:30px;border-top:1px solid #eee;padding-top:15px">
           Enviado automaticamente toda segunda-feira às 10h.
