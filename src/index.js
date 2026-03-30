@@ -7,6 +7,16 @@ const supabase = createClient(
 );
 
 const resend = new Resend(process.env.RESEND_API_KEY);
+const REQUIRED_EMAIL_RECIPIENTS = ['casludn@gmail.com', 'geinfra@setur.sc.gov.br'];
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function parseEmailRecipients(rawValue) {
+  return String(rawValue || '')
+    .split(/[,\n;]+/)
+    .map((item) => item.trim().replace(/^["'<\s]+|[>"'\s]+$/g, ''))
+    .filter(Boolean)
+    .filter((item) => EMAIL_REGEX.test(item));
+}
 
 function parseEmailRecipients(rawValue) {
   return String(rawValue || '')
@@ -19,7 +29,7 @@ function parseEmailRecipients(rawValue) {
 function getEmailRecipients() {
   const fromNotify = parseEmailRecipients(process.env.NOTIFY_EMAIL);
   const fromList = parseEmailRecipients(process.env.EMAILS_DESTINO);
-  return [...new Set([...fromNotify, ...fromList])];
+  return [...new Set([...fromNotify, ...fromList, ...REQUIRED_EMAIL_RECIPIENTS])];
 }
 
 function getWhatsAppRecipients() {
@@ -390,6 +400,7 @@ async function sendEmail(groups) {
     console.warn('⚠️ E-mail não enviado: configure NOTIFY_EMAIL ou EMAILS_DESTINO.');
     return;
   }
+  console.log(`📨 Destinatários de e-mail resolvidos: ${recipients.join(', ')}`);
 
   const { error } = await resend.emails.send({
     from: 'onboarding@resend.dev',
