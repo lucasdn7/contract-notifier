@@ -236,6 +236,14 @@ function buildEmailHtml({ expired, urgent, warning, notice }) {
       </div>
     `).join('');
 
+  const emptyState = total === 0
+    ? `
+      <div style="margin-bottom:25px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:18px;color:#334155">
+        ✅ Nenhum contrato vencido ou próximo do vencimento no período monitorado (últimos 30 dias + próximos 45 dias).
+      </div>
+    `
+    : '';
+
   return `
     <div style="font-family:Arial,sans-serif;max-width:980px;margin:auto;padding:20px;background:#f5f5f5">
       <div style="background:#fff;border-radius:10px;padding:30px;box-shadow:0 2px 8px rgba(0,0,0,0.1)">
@@ -245,6 +253,7 @@ function buildEmailHtml({ expired, urgent, warning, notice }) {
         <p style="color:#666;margin-bottom:25px">
           Foram encontrados <strong>${total} contrato(s)</strong> vencidos e/ou próximos ao vencimento em ${new Date().toLocaleDateString('pt-BR')}.
         </p>
+        ${emptyState}
         ${sections}
         <p style="color:#aaa;font-size:11px;margin-top:30px;border-top:1px solid #eee;padding-top:15px">
           Enviado automaticamente toda segunda-feira às 10h.
@@ -261,6 +270,11 @@ function buildWhatsAppSummary({ expired, urgent, warning, notice }) {
   lines.push(`📋 *ALERTA DE VENCIMENTOS*`);
   lines.push(`📅 ${new Date().toLocaleDateString('pt-BR')}`);
   lines.push(`📦 Total monitorado: *${total} contrato(s)*\n`);
+
+  if (total === 0) {
+    lines.push(`✅ Nenhum contrato vencido ou próximo do vencimento no período monitorado.`);
+    return lines.join('\n');
+  }
 
   if (expired.length > 0) {
     lines.push(`⚫ *VENCIDOS* (${expired.length})`);
@@ -310,6 +324,11 @@ function buildTelegramSummary({ expired, urgent, warning, notice }) {
   lines.push(`<b>📋 ALERTA DE VENCIMENTOS</b>`);
   lines.push(`📅 ${new Date().toLocaleDateString('pt-BR')}`);
   lines.push(`📦 Total monitorado: <b>${total} contrato(s)</b>\n`);
+
+  if (total === 0) {
+    lines.push(`✅ Nenhum contrato vencido ou próximo do vencimento no período monitorado.`);
+    return lines.join('\n');
+  }
 
   if (expired.length > 0) {
     lines.push(`<b>⚫ VENCIDOS (${expired.length})</b>`);
@@ -473,11 +492,10 @@ async function main() {
   const total = groups.expired.length + groups.urgent.length + groups.warning.length + groups.notice.length;
 
   if (total === 0) {
-    console.log('✅ Nenhum contrato vencido ou a vencer entre os últimos 30 e próximos 45 dias.');
-    return;
+    console.log('ℹ️ Nenhum contrato vencido ou a vencer entre os últimos 30 e próximos 45 dias. Enviando notificação mesmo assim.\n');
+  } else {
+    console.log(`⚠️  ${groups.expired.length} vencido(s) | ${groups.urgent.length} urgente(s) | ${groups.warning.length} atenção | ${groups.notice.length} aviso(s)\n`);
   }
-
-  console.log(`⚠️  ${groups.expired.length} vencido(s) | ${groups.urgent.length} urgente(s) | ${groups.warning.length} atenção | ${groups.notice.length} aviso(s)\n`);
 
   await sendEmail(groups);
   await sendWhatsApp(groups);
