@@ -143,9 +143,12 @@ function buildGoogleCalendarLink(contract) {
 async function getExpiringContracts() {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
+  const pastLimit = new Date(today);
+  pastLimit.setDate(today.getDate() - 30);
   const limit = new Date(today);
   limit.setDate(today.getDate() + 45);
 
+  const pastLimitStr = pastLimit.toISOString().split('T')[0];
   const todayStr = today.toISOString().split('T')[0];
   const limitStr = limit.toISOString().split('T')[0];
 
@@ -159,25 +162,26 @@ async function getExpiringContracts() {
       licitado_value,
       municipalities ( name )
     `)
-    .gte('vigencia_date', todayStr)
+    .gte('vigencia_date', pastLimitStr)
     .lte('vigencia_date', limitStr)
     .order('vigencia_date', { ascending: true });
 
   if (error) {
     console.error('Erro ao buscar contratos:', error.message);
-    return { urgent: [], warning: [], notice: [] };
+    return { expired: [], urgent: [], warning: [], notice: [] };
   }
 
-  const urgent = [], warning = [], notice = [];
+  const expired = [], urgent = [], warning = [], notice = [];
 
   for (const contract of data ?? []) {
     const days = getDaysUntil(contract.vigencia_date);
-    if (days <= 15) urgent.push({ ...contract, daysLeft: days });
+    if (days < 0) expired.push({ ...contract, daysLeft: days });
+    else if (days <= 15) urgent.push({ ...contract, daysLeft: days });
     else if (days <= 30) warning.push({ ...contract, daysLeft: days });
     else notice.push({ ...contract, daysLeft: days });
   }
 
-  return { urgent, warning, notice };
+  return { expired, urgent, warning, notice };
 }
 
 function buildTable(contracts) {
@@ -215,10 +219,11 @@ function buildTable(contracts) {
   `;
 }
 
-function buildEmailHtml({ urgent, warning, notice }) {
-  const total = urgent.length + warning.length + notice.length;
+function buildEmailHtml({ expired, urgent, warning, notice }) {
+  const total = expired.length + urgent.length + warning.length + notice.length;
 
   const sections = [
+    { list: expired, color: '#7f1d1d', bg: '#fef2f2', emoji: '⚫', label: 'VENCIDOS — Já passaram da vigência' },
     { list: urgent, color: '#c0392b', bg: '#fdf0ef', emoji: '🔴', label: 'URGENTE — Vencem em até 15 dias' },
     { list: warning, color: '#e67e22', bg: '#fef9f0', emoji: '🟠', label: 'ATENÇÃO — Vencem entre 16 e 30 dias' },
     { list: notice, color: '#2980b9', bg: '#f0f7fd', emoji: '🔵', label: 'AVISO — Vencem entre 31 e 45 dias' },
@@ -238,7 +243,7 @@ function buildEmailHtml({ urgent, warning, notice }) {
           📋 Alertas Semanais de Vencimento de Contratos
         </h2>
         <p style="color:#666;margin-bottom:25px">
-          Foram encontrados <strong>${total} contrato(s)</strong> próximos ao vencimento em ${new Date().toLocaleDateString('pt-BR')}.
+          Foram encontrados <strong>${total} contrato(s)</strong> vencidos e/ou próximos ao vencimento em ${new Date().toLocaleDateString('pt-BR')}.
         </p>
         ${sections}
         <p style="color:#aaa;font-size:11px;margin-top:30px;border-top:1px solid #eee;padding-top:15px">
@@ -249,13 +254,22 @@ function buildEmailHtml({ urgent, warning, notice }) {
   `;
 }
 
-function buildWhatsAppSummary({ urgent, warning, notice }) {
+function buildWhatsAppSummary({ expired, urgent, warning, notice }) {
   const lines = [];
-  const total = urgent.length + warning.length + notice.length;
+  const total = expired.length + urgent.length + warning.length + notice.length;
 
   lines.push(`📋 *ALERTA DE VENCIMENTOS*`);
   lines.push(`📅 ${new Date().toLocaleDateString('pt-BR')}`);
   lines.push(`📦 Total monitorado: *${total} contrato(s)*\n`);
+
+  if (expired.length > 0) {
+    lines.push(`⚫ *VENCIDOS* (${expired.length})`);
+    for (const c of expired) {
+      lines.push(`• Proc. ${c.process_number ?? 'N/A'} · ${c.municipalities?.name ?? 'N/A'}`);
+      lines.push(`  ⛔ Vencido há ${Math.abs(c.daysLeft)} dia(s) (${formatDate(c.vigencia_date)})`);
+    }
+    lines.push('');
+  }
 
   if (urgent.length > 0) {
     lines.push(`🔴 *URGENTE* · até 15 dias (${urgent.length})`);
@@ -289,13 +303,25 @@ function buildWhatsAppSummary({ urgent, warning, notice }) {
   return lines.join('\n');
 }
 
-function buildTelegramSummary({ urgent, warning, notice }) {
+function buildTelegramSummary({ expired, urgent, warning, notice }) {
   const lines = [];
-  const total = urgent.length + warning.length + notice.length;
+  const total = expired.length + urgent.length + warning.length + notice.length;
 
   lines.push(`<b>📋 ALERTA DE VENCIMENTOS</b>`);
   lines.push(`📅 ${new Date().toLocaleDateString('pt-BR')}`);
   lines.push(`📦 Total monitorado: <b>${total} contrato(s)</b>\n`);
+
+  if (expired.length > 0) {
+    lines.push(`<b>⚫ VENCIDOS (${expired.length})</b>`);
+    for (const c of expired) {
+      lines.push(`• <b>${escapeHtml(c.process_number)}</b>`);
+      lines.push(`  🏙 ${escapeHtml(c.municipalities?.name)}`);
+      lines.push(`  📄 ${escapeHtml(c.object)}`);
+      lines.push(`  💰 ${escapeHtml(formatCurrency(c.total_concedente_value))}`);
+      lines.push(`  ⛔ Vencido há ${Math.abs(c.daysLeft)} dia(s) · ${formatDate(c.vigencia_date)}`);
+    }
+    lines.push('');
+  }
 
   if (urgent.length > 0) {
     lines.push(`<b>🔴 URGENTE — até 15 dias (${urgent.length})</b>`);
@@ -339,7 +365,7 @@ function buildTelegramSummary({ urgent, warning, notice }) {
 }
 
 async function sendEmail(groups) {
-  const total = groups.urgent.length + groups.warning.length + groups.notice.length;
+  const total = groups.expired.length + groups.urgent.length + groups.warning.length + groups.notice.length;
   const recipients = getEmailRecipients();
   if (recipients.length === 0) {
     console.warn('⚠️ E-mail não enviado: configure NOTIFY_EMAIL ou EMAILS_DESTINO.');
@@ -349,7 +375,7 @@ async function sendEmail(groups) {
   const { error } = await resend.emails.send({
     from: 'onboarding@resend.dev',
     to: recipients,
-    subject: `📋 Alerta Semanal — ${total} contrato(s) próximo(s) ao vencimento — ${new Date().toLocaleDateString('pt-BR')}`,
+    subject: `📋 Alerta Semanal — ${total} contrato(s) vencidos e/ou próximos do vencimento — ${new Date().toLocaleDateString('pt-BR')}`,
     html: buildEmailHtml(groups),
   });
   if (error) console.error('Erro ao enviar e-mail:', error);
@@ -444,14 +470,14 @@ async function main() {
   console.log(`\n🔍 Verificando contratos — ${new Date().toLocaleDateString('pt-BR')}\n`);
 
   const groups = await getExpiringContracts();
-  const total = groups.urgent.length + groups.warning.length + groups.notice.length;
+  const total = groups.expired.length + groups.urgent.length + groups.warning.length + groups.notice.length;
 
   if (total === 0) {
-    console.log('✅ Nenhum contrato a vencer nos próximos 45 dias.');
+    console.log('✅ Nenhum contrato vencido ou a vencer entre os últimos 30 e próximos 45 dias.');
     return;
   }
 
-  console.log(`⚠️  ${groups.urgent.length} urgente(s) | ${groups.warning.length} atenção | ${groups.notice.length} aviso(s)\n`);
+  console.log(`⚠️  ${groups.expired.length} vencido(s) | ${groups.urgent.length} urgente(s) | ${groups.warning.length} atenção | ${groups.notice.length} aviso(s)\n`);
 
   await sendEmail(groups);
   await sendWhatsApp(groups);
