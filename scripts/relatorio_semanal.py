@@ -19,7 +19,7 @@ import requests
 from datetime import datetime, timedelta
  
 sys.path.insert(0, os.path.dirname(__file__))
-from notificacoes import (
+from notificacoes_v2 import (
     fmt_moeda, fmt_data, dias_restantes, link_processo, link_google_calendar,
     notificar_todos, resolver_municipios, SISTEMA_URL
 )
