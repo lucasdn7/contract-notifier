@@ -18,6 +18,14 @@ function parseEmailRecipients(rawValue) {
     .filter((item) => EMAIL_REGEX.test(item));
 }
 
+function parseEmailRecipients(rawValue) {
+  return String(rawValue || '')
+    .split(/[,\n;]+/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .filter((item) => item.includes('@'));
+}
+
 function getEmailRecipients() {
   const fromNotify = parseEmailRecipients(process.env.NOTIFY_EMAIL);
   const fromList = parseEmailRecipients(process.env.EMAILS_DESTINO);
