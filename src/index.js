@@ -227,14 +227,14 @@ function buildEmailHtml({ expired, urgent, warning, notice }) {
     { list: urgent, color: '#c0392b', bg: '#fdf0ef', emoji: '🔴', label: 'URGENTE — Vencem em até 15 dias' },
     { list: warning, color: '#e67e22', bg: '#fef9f0', emoji: '🟠', label: 'ATENÇÃO — Vencem entre 16 e 30 dias' },
     { list: notice, color: '#2980b9', bg: '#f0f7fd', emoji: '🔵', label: 'AVISO — Vencem entre 31 e 45 dias' },
-  ]
-    .filter(s => s.list.length > 0)
-    .map(({ list, color, bg, emoji, label }) => `
-      <div style="margin-bottom:35px;background:${bg};border-left:5px solid ${color};border-radius:6px;padding:20px">
-        <h3 style="color:${color};margin:0 0 15px 0">${emoji} ${label} (${list.length} contrato${list.length > 1 ? 's' : ''})</h3>
-        ${buildTable(list)}
-      </div>
-    `).join('');
+  ].map(({ list, color, bg, emoji, label }) => `
+    <div style="margin-bottom:35px;background:${bg};border-left:5px solid ${color};border-radius:6px;padding:20px">
+      <h3 style="color:${color};margin:0 0 15px 0">${emoji} ${label} (${list.length} contrato${list.length > 1 ? 's' : ''})</h3>
+      ${list.length > 0
+        ? buildTable(list)
+        : '<p style="margin:0;color:#64748b;font-size:13px;">Nenhum contrato nesta faixa no momento.</p>'}
+    </div>
+  `).join('');
 
   const emptyState = total === 0
     ? `
