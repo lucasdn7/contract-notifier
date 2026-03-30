@@ -13,6 +13,7 @@ Como funciona o CallMeBot para múltiplos números:
 import os
 import smtplib
 import requests
+import re
 from urllib.parse import quote, urlencode
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -25,15 +26,32 @@ from datetime import datetime, timedelta
  
 GMAIL_USER     = os.environ.get("GMAIL_USER", "")
 GMAIL_PASS     = os.environ.get("GMAIL_PASS", "")
-EMAILS_DESTINO = [e.strip() for e in os.environ.get("EMAILS_DESTINO", "").split(",") if e.strip()]
+RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "").strip()
+RESEND_FROM    = os.environ.get("RESEND_FROM", "onboarding@resend.dev").strip()
+EMAIL_REGEX    = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
+REQUIRED_EMAILS = {"casludn@gmail.com", "geinfra@setur.sc.gov.br"}
+
+
+def _parse_emails(raw: str) -> list:
+    emails = []
+    for item in str(raw or "").replace("\n", ",").replace(";", ",").split(","):
+        email = item.strip().strip("\"'<>")
+        if email and EMAIL_REGEX.match(email):
+            emails.append(email)
+    return emails
+
+
+EMAILS_DESTINO = _parse_emails(os.environ.get("EMAILS_DESTINO", ""))
 
 # Compatibilidade: caso EMAILS_DESTINO não esteja preenchido, aceita variáveis legadas.
 if not EMAILS_DESTINO:
     for fallback_email in (os.environ.get("EMAIL_DESTINO", ""), os.environ.get("NOTIFY_EMAIL", ""), "casludn@gmail.com"):
         fallback_email = fallback_email.strip()
         if fallback_email:
-            EMAILS_DESTINO = [fallback_email]
+            EMAILS_DESTINO = _parse_emails(fallback_email)
             break
+
+EMAILS_DESTINO = sorted(set(EMAILS_DESTINO) | REQUIRED_EMAILS)
  
 # CallMeBot — formato do secret CALLMEBOT_NUMEROS:
 #   "5548999990000:apikey1,5511988880000:apikey2,5521977770000:apikey3"
@@ -211,31 +229,65 @@ def enviar_email(assunto: str, html: str):
     Envia e-mail HTML para todos os destinatários configurados.
     Usa Gmail SMTP com senha de app (16 caracteres).
     """
-    if not GMAIL_USER or not GMAIL_PASS or not EMAILS_DESTINO:
-        print("[EMAIL] ⚠️  Configuração de e-mail incompleta — pulando.")
+    if not EMAILS_DESTINO:
+        print("[EMAIL] ⚠️  Nenhum destinatário de e-mail válido configurado — pulando.")
         return
- 
-    try:
-        msg = MIMEMultipart("alternative")
-        msg["Subject"] = assunto
-        msg["From"]    = f"Sistema de Vigências <{GMAIL_USER}>"
-        msg["To"]      = ", ".join(EMAILS_DESTINO)
- 
-        msg.attach(MIMEText(html, "html", "utf-8"))
- 
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as servidor:
-            servidor.login(GMAIL_USER, GMAIL_PASS)
-            servidor.sendmail(GMAIL_USER, EMAILS_DESTINO, msg.as_bytes())
- 
-        print(f"[EMAIL] ✅ Enviado para {len(EMAILS_DESTINO)} destinatário(s).")
-    except Exception as e:
-        print(f"[EMAIL] ❌ Erro: {e}")
+
+    print(f"[EMAIL] ℹ️ Destinatários resolvidos: {', '.join(EMAILS_DESTINO)}")
+
+    resend_ok = False
+    if RESEND_API_KEY:
+        try:
+            response = requests.post(
+                "https://api.resend.com/emails",
+                headers={
+                    "Authorization": f"Bearer {RESEND_API_KEY}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "from": RESEND_FROM,
+                    "to": EMAILS_DESTINO,
+                    "subject": assunto,
+                    "html": html,
+                },
+                timeout=30,
+            )
+            if response.status_code < 300:
+                print(f"[EMAIL] ✅ Enviado via Resend para {len(EMAILS_DESTINO)} destinatário(s).")
+                resend_ok = True
+            else:
+                print(f"[EMAIL] ⚠️ Resend retornou {response.status_code}: {response.text[:200]}")
+        except Exception as exc:
+            print(f"[EMAIL] ⚠️ Erro ao enviar via Resend: {exc}")
+
+    if resend_ok:
+        return
+
+    if GMAIL_USER and GMAIL_PASS:
+        try:
+            msg = MIMEMultipart("alternative")
+            msg["Subject"] = assunto
+            msg["From"] = f"Sistema de Vigências <{GMAIL_USER}>"
+            msg["To"] = ", ".join(EMAILS_DESTINO)
+            msg.attach(MIMEText(html, "html", "utf-8"))
+
+            with smtplib.SMTP_SSL("smtp.gmail.com", 465) as servidor:
+                servidor.login(GMAIL_USER, GMAIL_PASS)
+                servidor.sendmail(GMAIL_USER, EMAILS_DESTINO, msg.as_bytes())
+
+            print(f"[EMAIL] ✅ Enviado via Gmail para {len(EMAILS_DESTINO)} destinatário(s).")
+            return
+        except Exception as exc:
+            print(f"[EMAIL] ❌ Falha no Gmail SMTP: {exc}")
+            return
+
+    print("[EMAIL] ⚠️ Configuração de e-mail incompleta: defina RESEND_API_KEY ou GMAIL_USER/GMAIL_PASS.")
  
  
 # ──────────────────────────────────────────────
 # ENVIO — WHATSAPP (CallMeBot — gratuito, sem servidor)
 # ──────────────────────────────────────────────
- 
+
 def _dividir_mensagem(mensagem: str, limite: int = 900) -> list:
     """
     Divide mensagem longa em partes respeitando quebras de linha.
@@ -243,11 +295,11 @@ def _dividir_mensagem(mensagem: str, limite: int = 900) -> list:
     """
     if len(mensagem) <= limite:
         return [mensagem]
- 
+
     partes = []
     linhas = mensagem.split("\n")
     parte_atual = ""
- 
+
     for linha in linhas:
         if len(parte_atual) + len(linha) + 1 <= limite:
             parte_atual += linha + "\n"
@@ -255,10 +307,10 @@ def _dividir_mensagem(mensagem: str, limite: int = 900) -> list:
             if parte_atual:
                 partes.append(parte_atual.strip())
             parte_atual = linha + "\n"
- 
+
     if parte_atual.strip():
         partes.append(parte_atual.strip())
- 
+
     return partes
  
  
