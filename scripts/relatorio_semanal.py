@@ -110,19 +110,39 @@ def classificar(processos):
 def montar_whatsapp(urgentes, atencao, avisos):
     data_hoje = datetime.now().strftime("%A, %d/%m/%Y").capitalize()
     linhas = [f"📋 *RELATÓRIO SEMANAL DE VIGÊNCIAS*\n_{data_hoje}_"]
+
+    def encurtar_url(url: str) -> str:
+        """Encurta URL para deixar a mensagem do WhatsApp mais legível."""
+        if not url:
+            return ""
+        try:
+            resp = requests.get(
+                "https://tinyurl.com/api-create.php",
+                params={"url": url},
+                timeout=8
+            )
+            resp.raise_for_status()
+            curta = resp.text.strip()
+            if curta.startswith("http"):
+                return curta
+        except Exception as e:
+            print(f"[WHATSAPP] ⚠️  Falha ao encurtar URL: {e}")
+        return url
  
     def secao(emoji, titulo, lista):
         if not lista:
             return ""
         items = []
         for p in lista:
+            objeto = str(p.get("object") or "Não informado").strip()
+            calendar_link_curto = encurtar_url(p.get("calendar_link", ""))
             items.append(
                 f"📌 *Proc. {p['process_number']}* | {p['municipio_nome']}\n"
-                f"   📄 {p['object']}\n"
+                f"   📄 Objeto: {objeto}\n"
                 f"   💰 Concedente: {p['val_conc_fmt']} | Licitado: {p['val_lic_fmt']}\n"
                 f"   📅 Vencimento: {p['venc_fmt']} _({p['dias']} dias)_\n"
                 f"   🔗 {p['link']}\n"
-                f"   🗓️ Calendar: {p['calendar_link']}"
+                f"   🗓️ Calendar: {calendar_link_curto}"
             )
         return f"{emoji} *{titulo}*\n\n" + "\n\n".join(items)
  
